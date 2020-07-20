@@ -1,0 +1,1723 @@
+## Identify cell types associated 
+1. SKCM samples 
+2. Calculate correlation with each sample with tissue 
+3. Cox regression Sur ~ g + t + gxt 
+4. take significant ones only with FDR 1% 
+
+
+```{r}
+tcga.dataset = fread("~/liulab_home/projects/icb/data/tcga/scrna.v4.allgenes.nopcs/dataset.txt")
+tcga.sample = fread("~/liulab_home/projects/icb/data/tcga/scrna.v4.allgenes.nopcs/samples_name.txt")
+
+if.start.inx = which(colnames(tcga.dataset)== "B_cells_naive")
+dataset.col = colnames(tcga.dataset)
+surv.factors = tcga.dataset[,length(dataset.col) + seq(8)-8, with =F]
+exp.tcga = tcga.dataset[,seq(2,if.start.inx-1), with=F] %>% as.matrix
+
+tcga.exp = fread("~/liulab_home/data/tcga/TCGA_gdc/EBPlusPlusAdjustPANCAN_IlluminaHiSeq_RNASeqV2.geneExp.tsv")
+
+```
+
+```{r}
+normalize.singleR.exp = function(data.name){
+	ref.se =  eval(parse(text=paste0(data.name, "()"))) 
+	col.dat = colData(ref.se)
+	col.dat$Var1= paste(rownames(col.dat),seq(nrow(col.dat)))  
+	col.dat = as.data.table(col.dat)
+	norm.ref.se = assay(ref.se) %>%
+	t() %>% scale(., center=T, scale=T) %>% t()
+	rownames(norm.ref.se) %<>% toupper
+	colnames(norm.ref.se) = col.dat$Var1
+	list(ref.se=ref.se, norm.ref.se=norm.ref.se)
+}
+
+library(SingleR)
+singleR.data.names = grep("Data$", ls("package:SingleR"), value=T)
+singleR.dataset = lapply(singleR.data.names, function(ii) normalize.singleR.exp(data.name=ii))
+names(singleR.dataset) = singleR.data.names
+saveRDS(file="~/liulab_home/data/single_cell/singleR.dataset.RDS", singleR.dataset)
+
+```
+
+```{r}
+
+skcm.inx = which(tcga.dataset$cancertype =="SKCM")
+surv.factors.skcm = surv.factors[skcm.inx]
+sample.names.skcm = tcga.sample$x[skcm.inx]
+exp.tcga.skcm = exp.tcga[skcm.inx,] %>%
+  scale(.,scale=T, center=T) %>% 
+  set_rownames(tcga.sample$x[skcm.inx]) %>% 
+  t
+run.seq = seq(2, if.start.inx-1)
+genes = colnames(tcga.dataset)[run.seq]
+
+calculate.singleR.corelation <- function(mat, ref.data) {
+	col.dat = colData(ref.data$ref.se)
+	col.dat = as.data.table(col.dat)
+	colnames(ref.data$norm.ref.se) = col.dat$label.fine
+	## defined in avinash.scrna
+	calcCorEnrich(ref.data$norm.ref.se, mat)
+}
+
+singleR.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
+
+cor.out = lapply(singleR.dataset, function(ii) calculate.singleR.corelation(mat=exp.tcga.skcm, ref.data=ii)) 
+
+skcm.cor.out = do.call(rbind,cor.out)
+cell.types =  rownames(skcm.cor.out) %>% unique
+skcm.cor.unique = sapply( cell.types, function(tt){
+	inx = which(rownames(skcm.cor.out) == tt)
+	if(length(inx) > 1){
+		out = skcm.cor.out[inx,] %>% colMeans(na.rm=T)
+	}else{
+		out = skcm.cor.out[inx,]
+	}
+	out
+} ) %>% t
+
+skcm.cor.gdt = skcm.cor.unique["T_cell:gamma-delta", ,drop=F]  
+skcm.cor.gdt %<>% rbind(skcm.cor.gdt)
+gdt.cor.out = lapply(singleR.dataset, function(ii) calculate.singleR.corelation(mat=skcm.cor.gdt, ref.data=ii))
+
+```
+
+## Identify variable genes to reduce calculations 
+```{r}
+library(Seurat)
+curr.ref = singleR.dataset[["HumanPrimaryCellAtlasData"]]
+exp.gamma.delta =  curr.ref$norm.ref.se[,curr.ref$ref.se@colData$label.fine=="T_cell:gamma-delta"] 
+
+tt = curr.ref$ref.se %>% assay %>%
+FindVariableFeatures
+
+tt <- tt[order(tt$vst.variance.standardized, decreasing = TRUE), , drop = FALSE]
+variable.features = rownames(tt) %>% head(2000)
+genes.sel = intersect(variable.features, rownames(exp.tcga.skcm))
+exp.tcga.skcm = exp.tcga.skcm[genes.sel,]
+exp.gamma.delta = exp.gamma.delta[toupper(genes.sel),]
+```
+
+```{r}
+library(survival)
+calculate.cox.interaction = function(dtx){
+	tryCatch(
+	{
+		dtx = dtx[!is.na(gene)]
+		aa =  coxph(Surv(Survival, Event) ~ gene + cell.type + gene*cell.type, dtx)
+		summary(aa)$coefficients[,c(1,5)] %>% t%>% c
+	},
+	error=  function(e) rep(NA,6)
+	)
+
+}
+
+library(parallel)
+interaction.out = mclapply(cell.types, function(cc){ 
+	dt.curr = surv.factors.skcm[,.(Survival=OS.time,Event=OS.filtered)]%>%
+	.[,cell.type:=skcm.cor.unique[cc,]]
+	out = apply(exp.tcga.skcm,1, function(exp.curr) {
+		dt.curr[,gene:=exp.curr]%>%
+		calculate.cox.interaction
+	})
+	t(out)
+}, mc.cores = 60) 
+
+interaction.mat = interaction.out %>% sapply(., function(tt) tt[,5]) %>% t
+
+enrichment.p = WGCNA::corAndPvalue(t(interaction.mat), exp.gamma.delta, 
+             use = "pairwise.complete.obs", 
+             alternative = "two.sided",
+             method="spearman")
+
+avi.dt = data.table(cell.type = cell.types, P=enrichment.p$p[,1],
+	correlation = enrichment.p$cor[,1])
+avi.dt[,p.adj:=p.adjust(P, method="fdr")]
+library(EnhancedVolcano)
+p = EnhancedVolcano(avi.dt,
+	lab = avi.dt$cell.type,
+	x = 'correlation',
+	y = 'p.adj',
+	pCutoff = 1e-40,
+	FCcutoff = .1,
+	pointSize = c(ifelse(avi.dt$p.adj< 1E-40, 2, 1)),
+	labSize = 4.0,
+	legend=c('NS','Correlation','Adj.P value',
+		'Adj.P value & correlation'),
+	legendPosition = 'bottom',
+	legendLabSize = 8,
+	legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	xlim = c(-.5, .5),
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+ggsave(file="results/.figs/gdt.dyfn.pdf", p, width=16, height=10)
+		
+```
+
+## Download data from TCGAbiolinks 
+
+```{r}
+setwd("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/")
+library(TCGAbiolinks)
+
+query <- GDCquery(project = "TCGA-SKCM",
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification", 
+                  workflow.type = "HTSeq - FPKM-UQ")
+GDCdownload(query)
+# data <- GDCprepare(query)
+skcm.exp <- GDCprepare(query, 
+                      save = TRUE, 
+                      summarizedExperiment = TRUE, 
+                      save.filename = "SKCMHTSeq_FPKM-UQ.rda")
+skcm.exp.mat = assay(skcm.exp) %>%
+set_rownames(rowData(skcm.exp)$external_gene_name) %>% t %>% 
+ scale(., scale=T, center=T) %>% t 
+colnames(skcm.exp.mat) %<>% substring(.,1,16)
+barcode.skcm = gsub("\\.", sample.names.skcm, replacement="-")
+setdiff(barcode.skcm, colnames(skcm.exp.mat))
+skcm.exp.mat = skcm.exp.mat[,barcode.skcm]
+```
+
+## Check with TRG and TRD alleles 
+```{r}
+load("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/SKCMHTSeq_FPKM-UQ.rda")
+skcm.exp = data; rm(data)
+
+exp.tcga.skcm1 = exp.tcga[skcm.inx,] %>%
+  scale(.,scale=T, center=T) %>% 
+  set_rownames(tcga.sample$x[skcm.inx]) %>% 
+  t() 
+exp.tcga.skcm.trg = exp.tcga.skcm1[c("TRDV3", "TRGV5"),] 
+exp.tcga.skcm.trg  %<>% rbind(., TRDG=rowSums(.))
+
+interaction.trg.out = mclapply(cell.types, function(cc){ 
+	dt.curr = surv.factors.skcm[,.(Survival=OS.time,Event=OS.filtered)]%>%
+	.[,cell.type:=skcm.cor.unique[cc,]]
+	out = apply(exp.tcga.skcm.trg,1, function(exp.curr) {
+		dt.curr[,gene:=exp.curr]%>%
+		calculate.cox.interaction
+	})
+	t(out)
+}, mc.cores = 60) 
+
+interaction.trg.p = interaction.trg.out %>% sapply(., function(tt) tt[,6]) %>% t
+interaction.trg.cor = interaction.trg.out %>% sapply(., function(tt) tt[,5]) %>% t
+
+
+library(survminer)
+surv.factors.skcm[,TRD.exp:=exp.tcga.skcm.trg["TRDV3",]] %>% 
+.[,Fibroblasts:=skcm.cor.unique["Fibroblasts activated",]]
+surv.factors.skcm[,TRD.level:=ifelse(TRD.exp > mean(TRD.exp), "TRD-high", "TRD-low")] %>%
+.[,Fibroblast.level:=ifelse(Fibroblasts > mean(Fibroblasts), "Fibroblast-high", "Fibroblast-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ TRD.level, data = surv.factors.skcm )
+p = ggsurvplot_facet( fit1, surv.factors.skcm, facet.by = "Fibroblast.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/gdt.fibo.dyfn.pdf", p)
+
+
+surv.factors.skcm[,TRD.exp:=exp.tcga.skcm.trg["TRDV3",]] %>% 
+.[,Myelocytes:=skcm.cor.unique["Myelocyte",]]
+surv.factors.skcm[,TRD.level:=ifelse(TRD.exp > mean(TRD.exp), "TRD-high", "TRD-low")] %>%
+.[,Myelocyte.level:=ifelse(Myelocytes > mean(Myelocytes), "Myelocyte-high", "Myelocyte-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ TRD.level, data = surv.factors.skcm )
+p = ggsurvplot_facet( fit1, surv.factors.skcm, facet.by = "Myelocyte.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/gdt.Myelocyte.dyfn.pdf", p)
+
+
+surv.factors.skcm[,TRD.exp:=exp.tcga.skcm.trg["TRDV3",]] %>% 
+.[,B_Cell:=skcm.cor.unique["Exhausted B cells",]] %>%
+.[,gdT:=skcm.cor.unique["T_cell:gamma-delta",]] 
+
+surv.factors.skcm[,TRD.level:=ifelse(TRD.exp > mean(TRD.exp), "TRD-high", "TRD-low")] %>%
+.[,B_Cells.level:=ifelse(B_Cell > mean(B_Cell), "B_Cells-high", "B_Cells-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ B_Cells.level, data = surv.factors.skcm )
+p = ggsurvplot_facet( fit1, surv.factors.skcm, facet.by = "TRD.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/gdt.B_Cells.dyfn.pdf", p)
+
+
+surv.factors.skcm[,Memory_B_Cells:=skcm.cor.unique["Memory B-cells",]]
+surv.factors.skcm[,gdT.level:=ifelse(gdT > mean(gdT), "gdT-high", "gdT-low")] %>%
+.[,Memory_B_Cells.level:=ifelse(Memory_B_Cells > mean(Memory_B_Cells), "Memory_B_Cells-high", "Memory_B_Cells-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ Memory_B_Cells.level, data = surv.factors.skcm )
+p = ggsurvplot_facet( fit1, surv.factors.skcm, facet.by = "gdT.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/gdt.Memory_B_Cells.gdt.dyfn.pdf", p)
+```
+
+## Analysis of TIDE
+
+```{r}
+mycorAndP = function(x,y, use = "pairwise.complete.obs", 
+             alternative = "two.sided",
+             method="spearman"){
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+	common = intersect(rownames(x), rownames(y))
+	x = x[common, , drop=F]
+	y = y[common, , drop=F]
+ WGCNA::corAndPvalue(x, y, 
+             use = use, 
+             alternative = alternative, 
+             method=method)
+}
+mycor = function(x,y, use = "pairwise.complete.obs", 
+             method="spearman"){
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+	common = intersect(rownames(x), rownames(y))
+	x = x[common, , drop=F]
+	y = y[common, , drop=F]
+ WGCNA::cor(x, y, 
+             use = use, 
+             method=method)
+}
+tide.skcm = fread("~/liulab_home/data/TIDE/Results/Dysfunction_scores/raw_output/TCGA.SKCM.RNASeq.OS_base.interaction")
+gene.df <- clusterProfiler::bitr(tide.skcm$V1, toType="SYMBOL", fromType="ENTREZID", OrgDb="org.Hs.eg.db")
+tide.skcm$gene=gene.df[match(tide.skcm$V1,gene.df$ENTREZID),]$SYMBOL
+tide.skcm[,logp:=-sign(z)*log(p)]
+tide.score = tide.skcm$z %>% as.matrix(ncol=1) %>% 
+set_rownames(tide.skcm$gene)
+mycor.out = lapply(singleR.dataset, function(tt) 
+	mycorAndP(tt$norm.ref.se, tide.score)
+)
+mycor.out = lapply(names(mycor.out), function(tt){
+	lapply(mycor.out[[tt]], c) %>% do.call(cbind,.) %>% as.data.table  %>% 
+	.[,cell.type:=singleR.dataset[[tt]]$ref.se@colData$label.fine]%>% 
+	.[,p.adj:=p.adjust(p, method="fdr")]
+}) %>% do.call(rbind, .)
+
+tide.sub.skcm = tide.skcm[order(p)[1:200]]
+tide.sub.score = tide.sub.skcm$logp %>% as.matrix(ncol=1) %>% 
+set_rownames(tide.sub.skcm$gene)
+mycor.out.sub = lapply(singleR.dataset, function(tt) 
+	mycorAndP(tt$norm.ref.se, tide.sub.score, method="spearman")
+)
+mycor.out.sub1 = lapply(names(mycor.out.sub[c(2,4,5)]), function(tt){
+	lapply(mycor.out.sub[[tt]], c) %>% do.call(cbind,.) %>% as.data.table  %>% 
+	.[,cell.type:=singleR.dataset[[tt]]$ref.se@colData$label.fine]
+}) %>% do.call(rbind, .) %>% 
+	.[,p.adj:=p.adjust(p, method="fdr")] %>% 
+.[order(p.adj)] %>% 
+.[,list(p=min(p), cor=mean(cor), p.adj=min(p.adj)), by=cell.type]
+library(EnhancedVolcano)
+mycor.out.sub2 =mycor.out.sub1[!grep("regulatory", cell.type)]
+p = EnhancedVolcano(mycor.out.sub2,
+	lab = mycor.out.sub2$cell.type,
+	x = 'cor',
+	y = 'p.adj',
+	pCutoff = 5e-2,
+	FCcutoff = .1,
+	pointSize = c(ifelse(mycor.out.sub2$p.adj< 5e-2, 2, 1)),
+	labSize = 4.0,
+	legend=c('NS','Correlation','Adj.P value',
+		'Adj.P value & correlation'),
+	legendPosition = 'bottom',
+	legendLabSize = 8,
+	legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	xlim = c(-.3, .3),
+	ylim = c(0, 3),
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+ggsave(file="results/.figs/gdt.t_cell.dysfunction.pdf", p, width=16, height=10)
+
+
+calculate.singleR.corelation <- function(mat, ref.data) {
+	col.dat = colData(ref.data$ref.se)
+	col.dat = as.data.table(col.dat)
+	colnames(ref.data$norm.ref.se) = col.dat$label.fine
+	mycor(ref.data$norm.ref.se, mat, method="pearson")
+}
+
+skcm.exp.singer.cor = lapply(singleR.dataset[c(2,4,5)], function(ii) calculate.singleR.corelation(mat=skcm.exp.mat, ref.data=ii)) 
+skcm.exp.singer.cor = skcm.cor.unique
+
+surv.curr = surv.factors.skcm 
+cyto.genes = c("CD8A", "CD8B", "GZMA", "GZMB", "PRF1")
+surv.curr[,cytotoxic:=colMeans(skcm.exp.mat[cyto.genes,])]
+surv.curr[,"Monocytes_CD14":=skcm.exp.singer.cor ["Monocytes, CD14+",]]
+surv.curr[,cytotoxic.level:=ifelse(cytotoxic > median(cytotoxic), "cytotoxic-high", "cytotoxic-low")] %>%
+.[,Monocytes_CD14.level:=ifelse(Monocytes_CD14 > median(Monocytes_CD14), "Monocytes_CD14-high", "Monocytes_CD14-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ cytotoxic.level, data = surv.curr )
+p = ggsurvplot_facet( fit1, surv.curr, facet.by = "Monocytes_CD14.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/cytoxic.dyfn.Monocytes_CD14.pdf", p)
+
+surv.curr[,"Tgd.vg3":=skcm.exp.singer.cor ["Tgd (Tgd.VG3+24AHI)",]]
+surv.curr[,cytotoxic.level:=ifelse(cytotoxic > median(cytotoxic), "cytotoxic-high", "cytotoxic-low")] %>%
+.[,Tgd.vg3.level:=ifelse(Tgd.vg3 > median(Tgd.vg3), "Tgd.vg3-high", "Tgd.vg3-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ cytotoxic.level, data = surv.curr )
+p = ggsurvplot_facet( fit1, surv.curr, facet.by = "Tgd.vg3.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/cytoxic.dyfn.Tgd.vg3.pdf", p)
+
+
+surv.curr[,"Macrohage.MF":=skcm.exp.singer.cor ["Macrophages (MF.11CLOSER)",]]
+surv.curr[,cytotoxic.level:=ifelse(cytotoxic > median(cytotoxic), "cytotoxic-high", "cytotoxic-low")] %>%
+.[,Macrohage.MF.level:=ifelse(Macrohage.MF > median(Macrohage.MF), "Macrohage.MF-high", "Macrohage.MF-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ cytotoxic.level, data = surv.curr )
+p = ggsurvplot_facet( fit1, surv.curr, facet.by = "Macrohage.MF.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/cytoxic.dyfn.Macrohage.MF.pdf", p)
+
+
+
+surv.curr[,"Stem_Cells":=skcm.exp.singer.cor ["Stem cells (SC.CMP.DR)",]]
+surv.curr[,cytotoxic.level:=ifelse(cytotoxic > median(cytotoxic), "cytotoxic-high", "cytotoxic-low")] %>%
+.[,Stem_Cells.level:=ifelse(Stem_Cells > median(Stem_Cells), "Stem_Cells-high", "Stem_Cells-low")] 
+
+fit1 <- survfit( Surv(OS.time, OS.filtered) ~ cytotoxic.level, data = surv.curr )
+p = ggsurvplot_facet( fit1, surv.curr, facet.by = "Stem_Cells.level", 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/cytoxic.dyfn.Stem_Cells.pdf", p)
+
+```
+
+
+## Visualize correlation of correlation matrix 
+
+```{r}
+
+M<-cor(t(skcm.cor.unique[1:40,]), method="spearman")
+head(round(M,2))
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+library(corrplot)
+pdf("results/.figs/cor.cor.pdf", width=16, height=10)
+corrplot(M, method="color", col=col(200),  
+         type="upper", order="hclust", 
+         addCoef.col = NULL,
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         # p.mat = p.mat, sig.level = 0.01, insig = "blank", 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE 
+         )
+dev.off()
+
+## 21 and 1
+which(M>0.85 & M < .88,arr.ind=T) 
+sel = rownames(M)[c(6,11)]
+aa = singleR.dataset[[1]]
+bb = colData(aa$ref.se) %>% as.data.table
+bb$inx = seq(nrow(bb))
+bb.sel = bb[label.fine %in% sel] ## 1 and 3d
+avi.dt = aa$norm.ref.se[,c(14,20)] %>% as.data.table %>% 
+set_colnames(c("cd4T", "Bcells"))
+p = ggplot(avi.dt, aes(x=cd4T, y=Bcells)) + geom_point(size=.5, alpha=0.5) + 
+theme_bw()
+ggsave(filename="results/.figs/Neutrophils.Megakaryocytes.pdf", p) 
+```
+
+
+## Evaluate the gerber correlation 
+
+```{r}
+gerber.correlation = function(hist.returns, lookback = nrow(hist.returns), threshold = 0.5, psuedo.count=0) {
+    n <- ncol(hist.returns)
+    nperiods <- nrow(hist.returns)
+  
+    if (lookback > nperiods) lookback <- nperiods
+    index <- (nperiods - lookback + 1) : nperiods
+  
+    standard.deviation <- apply(hist.returns[index,,drop=F], 2, sd, na.rm = T)
+    threshold <- threshold * standard.deviation
+  
+    correlation <- matrix(1, n, n, dimnames=list(colnames(hist.returns), colnames(hist.returns)))
+    for (i in 1:(n-1))
+        for (j in 2:n) {
+            pos <- sum((hist.returns[,i] >= threshold[i] & hist.returns[,j] >= threshold[j]) |
+                       (hist.returns[,i] <= -threshold[i] & hist.returns[,j] <= -threshold[j]), na.rm = T) + psuedo.count
+      
+            neg <- sum((hist.returns[,i] >= threshold[i] & hist.returns[,j] <= -threshold[j]) |
+                       (hist.returns[,i] <= -threshold[i] & hist.returns[,j] >= threshold[j]), na.rm = T) + psuedo.count
+      
+            correlation[i,j] <- correlation[j,i] <- (pos - neg) / (pos + neg)
+        }
+    correlation  
+}
+
+gerber.correlation2 = function(x, y, threshold.pos = 0.5, threshold.neg=0.5, psuedo.count=0) {
+    nx <- ncol(x)
+    ny <- ncol(y)
+    nperiods <- nrow(x)
+
+  
+  
+    standard.deviation.x <- apply(x, 2, sd, na.rm = T)
+    standard.deviation.y <- apply(y, 2, sd, na.rm = T)
+    thresholdx.pos <- threshold.pos * standard.deviation.x
+    thresholdy.pos <- threshold.pos * standard.deviation.y
+    thresholdx.neg <- threshold.neg * standard.deviation.x
+    thresholdy.neg <- threshold.neg * standard.deviation.y
+  
+    correlation <- matrix(1, nx, ny, dimnames=list(colnames(x), colnames(y)))
+    for (i in 1:nx)
+        for (j in 1:ny) {
+            pos <- sum((x[,i] >= thresholdx.pos[i] & y[,j] >= thresholdy.pos[j]) |
+                       (x[,i] <= -thresholdx.pos[i] & y[,j] <= -thresholdy.pos[j]), na.rm = T) + psuedo.count
+      
+            neg <- sum((x[,i] >= thresholdx.neg[i] & y[,j] <= -thresholdy.neg[j]) |
+                       (x[,i] <= -thresholdx.neg[i] & y[,j] >= thresholdy.neg[j]), na.rm = T) + psuedo.count
+      
+            correlation[i,j] <- (pos - neg) / (pos + neg)
+        }
+    correlation  
+}
+
+curr.label = singleR.dataset[[1]]$ref.se@colData$label.fine 
+sel = sapply(unique(curr.label), function(tt){
+	inx = which(curr.label %in% tt)
+	if(length(inx) >=2){
+		inx = inx[1:2]
+	}else{
+		inx=NULL
+	}
+}) 
+sel = sel[1:20] %>% unlist
+
+temp.exp = singleR.dataset[[1]]$norm.ref.se[,sel] %>% 
+set_colnames(curr.label[sel])
+out.gerber = gerber.correlation(temp.exp) %>% 
+set_rownames(colnames(temp.exp)) %>%
+set_colnames(colnames(temp.exp))
+out.spearman = cor(temp.exp, method="spearman", use = "pairwise.complete.obs")
+out.pearson = cor(temp.exp, method="pearson", use = "pairwise.complete.obs")
+# ord = hclust(out.spearman)
+hr <- hclust(as.dist(1-out.spearman), method="complete") 
+out.gerber=out.gerber[hr$order, hr$order] 
+out.spearman=out.spearman[hr$order, hr$order] 
+out.pearson=out.pearson[hr$order, hr$order] 
+
+pdf("results/.figs/gerber.comparison.pdf", width=10, height=7)
+par(mfrow=c(1,2))
+corrplot(out.gerber, title = "gerber", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.gerber),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+aa = corrplot(out.spearman, title = "spearman", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.spearman),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+# corrplot(out.pearson, title = "pearson", 
+# 	method="color", col=col(200),  
+#          type="upper", order="original", 
+#          addCoef.col = T,
+#           # Add coefficient of correlation
+#          tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+#          diag=FALSE 
+#          )
+
+dev.off()
+
+seqs = seq(0.2, 3, 0.25) 
+
+pdf("results/.figs/gerber.comparison.pdf", width=10, height=7)
+par(mfrow=c(3,4))
+for (ii in seqs) {
+temp = gerber.correlation(temp.exp, threshold = ii) %>% 
+.[hr$order, hr$order]
+corrplot(temp, title = as.character(ii), 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(temp.exp),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+}
+dev.off()
+
+#' Calculate Preferential Expression Measure
+#' Please refer Kryuchkova-Mostacci, N., & Robinson-Rechavi, M. (2017). A benchmark of gene expression tissue-specificity metrics. Briefings in Bioinformatics, 18(2), 205–214. https://doi.org/10.1093/bib/bbw008
+#' Defined as  log10(expr(g,t) * sum_{g,t} expr/(sum_{t}expr * sum_{g}expr ))
+#' @param expr expression value
+#'
+#' @export
+#' @return
+calculate.pem = function(expr){
+	sum.expr = sum(expr,na.rm=T)
+	cols = matrix(colSums(expr,na.rm=T), nrow=1)
+	rows = matrix(rowSums(expr,na.rm=T), ncol=1)
+	aa = log10((expr+1) * sum.expr/( rows %*% cols))
+	aa[is.nan(aa)] = NA
+	aa[is.infinite(aa)] = NA
+	aa
+}
+
+calculate.tau = function(expr){
+	expr = expr/apply(expr,1,max,na.rm=T)
+	rowSums(1-expr,na.rm=T)/(ncol(expr)-1) 
+}
+
+calculate.tau.unique = function(expr, labels){
+	expr.unique = lapply(unique(labels), function(tt){
+		inx =which(labels==tt)
+		out = expr[,inx]
+		if(length(inx) > 1) out = rowMeans(out,na.rm=T)
+	}) %>% do.call(cbind,.)
+ calculate.tau( expr.unique)
+
+}
+expr =  singleR.dataset[[1]]$ref.se %>% assay
+tau = calculate.tau.unique(expr, singleR.dataset[[1]]$ref.se@colData$label.fine)
+
+
+pdf("results/.figs/tissue.specfic.hist.pdf")
+hist(tau, 200)
+dev.off()
+temp.exp.ts = temp.exp *  tau
+
+out.gerber = gerber.correlation2(temp.exp.ts, temp.exp)
+out.spearman = cor(temp.exp.ts, temp.exp, method="spearman", use = "pairwise.complete.obs")
+out.pearson = cor(temp.exp.ts, temp.exp, method="pearson", use = "pairwise.complete.obs")
+hr <- hclust(as.dist(1-out.spearman), method="complete") 
+
+pdf("results/.figs/tissue.specfic.gerber.comparison.pdf", width=10, height=7)
+par(mfrow=c(1,3))
+corrplot(out.gerber, title = "gerber", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.gerber),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+aa = corrplot(out.spearman, title = "spearman", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.spearman),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+corrplot(out.pearson, title = "pearson", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.pearson),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+
+dev.off()
+
+
+pem = calculate.pem(expr)
+pdf("results/.figs/tissue.specfic.hist.pdf")
+hist(pem[,2], 200)
+dev.off()
+
+pem.sub = pem[,sel] %>% set_colnames(colnames(temp.exp))
+out.gerber = gerber.correlation2(pem.sub, temp.exp)
+out.spearman = cor(pem.sub, temp.exp, method="spearman", use = "pairwise.complete.obs")
+out.pearson = cor(pem.sub, temp.exp, method="pearson", use = "pairwise.complete.obs")
+
+pdf("results/.figs/tissue.specfic.gerber.comparison.pem.pdf", width=10, height=7)
+par(mfrow=c(1,3))
+corrplot(out.gerber, title = "gerber", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.gerber),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+aa = corrplot(out.spearman, title = "spearman", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.spearman),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+corrplot(out.pearson, title = "pearson", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(out.pearson),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+dev.off()
+
+seqs = seq(0.2, 3, 0.25) 
+
+pdf("results/.figs/gerber.comparison.pdf", width=10, height=7)
+par(mfrow=c(3,4))
+for (ii in seqs) {
+temp = gerber.correlation2(pem.sub, temp.exp, threshold = ii, psuedo.count=1)
+corrplot(temp, title = as.character(ii), 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(temp.exp),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+}
+dev.off()
+
+pdf("results/.figs/gerber.comparison.pem.asymmetric.threshold.pdf", width=10, height=7)
+temp = gerber.correlation2(pem.sub, temp.exp, threshold.pos =0.5, threshold.neg=0.5, psuedo.count=0)
+corrplot(temp, title = "0.5;05", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(temp.exp),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+
+temp = gerber.correlation2(pem.sub, temp.exp, threshold.pos =1.5, threshold.neg=0.75, psuedo.count=0)
+corrplot(temp, title = "2;0.5", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(temp.exp),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+dev.off()
+
+
+calc.gerber = function(x,y, threshold.pos =.75, threshold.neg=0.75) {
+	require(magrittr)
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+	common = intersect(rownames(x), rownames(y))
+    gerber.correlation2(x[common,],y[common,],threshold.pos =threshold.pos, threshold.neg=threshold.neg)
+}
+
+
+
+
+tcga.ref.gerber = calc.gerber(exp.tcga.skcm, pem.sub, threshold.pos =1, threshold.neg=1)
+pdf("results/.figs/gerber.tcga.pdf") 
+hist(tcga.ref.cor,breaks=200)
+dev.off()
+tcga.ref.gerber %<>% t
+
+skcm.cor.out.sub = skcm.cor.out[sel,] %>% set_rownames(colnames(pem.sub))
+
+tcga.cor = cor(tcga.ref.gerber %>% t)
+skcm.cor.sub = cor(skcm.cor.out.sub %>% t)
+
+pdf("results/.figs/gerber.comparison.skcm.pdf")
+corrplot(tcga.cor, title = "gerber", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(tcga.cor),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+corrplot(skcm.cor.sub, title = "correlation", 
+	method="color", col=col(200),  
+         type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(temp.exp),
+          # Add coefficient of correlation
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+dev.off()
+
+```
+## tau vs. z-score 
+## Gerber tau 
+## Gerber z-score
+## Spearman tau
+## Spearman z-score
+```{r}
+
+calc.cor = function(x,y, method="spearman") {
+	require(magrittr)
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+	common = intersect(rownames(x), rownames(y))
+    cor(x[common,],y[common,], method=method, use = "pairwise.complete.obs") 
+}
+
+skcm.gerber.tau = calc.gerber(exp.tcga.skcm, pem.sub, threshold.pos =1, threshold.neg=1)
+skcm.gerber.z = calc.gerber(exp.tcga.skcm, temp.exp, threshold.pos =1, threshold.neg=1)
+skcm.spearman.tau = calc.spearman(exp.tcga.skcm, pem.sub)
+skcm.spearman.z = calc.cor(exp.tcga.skcm, temp.exp)
+
+temp.250.exp = temp.exp %>% apply(.,2, function(tt){
+	xx = abs(tt)
+	thrs = sort(xx,decreasing=T)[1000]
+	ifelse(xx> thrs, tt,NA)
+})
+skcm.pearson.200.z = calc.cor(exp.tcga.skcm, temp.250.exp, method="spearman")
+
+var.names  = c( "skcm.gerber.z", "skcm.spearman.tau", "skcm.spearman.z", "skcm.pearson.200.z")
+make.corrplot = function(var.name, ...){
+	var = eval(parse(text = var.name)) %>% 
+	cor(., method="spearman")
+	corrplot( var, 
+		title = var.name, 
+		method="color", col=col(200),  
+		type="upper", order="original", 
+         addCoef.col = T,
+         number.cex= 7/ncol(var),
+         tl.cex=0.5, tl.col="black", tl.srt=45, #Text label color and rotation
+         diag=FALSE 
+         )
+}
+
+
+pdf("results/.figs/speaman.comparison.spearman.skcm.pdf"); 
+par( mfrow = c(2, 2))
+for (var.name in var.names) {
+	make.corrplot(var.name)
+}; dev.off()
+
+```
+
+
+## Identify tissue by tissue interactions 
+
+```{r}
+
+exp.tcga.norm = exp.tcga %>%
+  scale(.,scale=T, center=T) %>% 
+  set_rownames(tcga.sample$x) %>% 
+  t
+run.seq = seq(2, if.start.inx-1)
+genes = colnames(tcga.dataset)[run.seq]
+
+calculate.singleR.corelation <- function(mat, ref.data) {
+	col.dat = colData(ref.data$ref.se)
+	col.dat = as.data.table(col.dat)
+	colnames(ref.data$norm.ref.se) = col.dat$label.fine
+	## defined in avinash.scrna
+	calcCorEnrich(ref.data$norm.ref.se, mat)
+}
+cor.out = lapply(singleR.dataset, function(ii) calculate.singleR.corelation(mat=exp.tcga.norm, ref.data=ii)) 
+
+tcga.cor.out = do.call(rbind,cor.out)
+cell.types =  rownames(tcga.cor.out) %>% unique
+tcga.cor.unique = sapply( cell.types, function(tt){
+	inx = which(rownames(tcga.cor.out) == tt)
+	if(length(inx) > 1){
+		out = tcga.cor.out[inx,] %>% colMeans(na.rm=T)
+	}else{
+		out = tcga.cor.out[inx,]
+	}
+	out
+} ) %>% t
+saveRDS(file="~/liulab_home/data/tcga/tcga.singler.Rds", tcga.cor.unique)
+```
+
+```{r}
+tcga.cor.gdt = tcga.cor.unique["T_cell:gamma-delta",]  
+avi.dt = data.table(gamma.delta.score=tcga.cor.gdt, cancer.type=tcga.dataset$cancertype)
+avi.dt.summ= avi.dt[,.(mean(gamma.delta.score, na.rm=T)), by=cancer.type][order(V1)]
+avi.dt[,cancer.type:=factor(cancer.type, levels=avi.dt.summ$cancer.type)]
+p = ggplot(avi.dt, aes(x=cancer.type, y=gamma.delta.score)) + 
+geom_boxplot() +
+  geom_point(pch = 21, fill = "grey",
+             position = position_jitter(width = 0.5, height = 0)) +
+             theme_bw()
+ggsave(filename="~/tcga.gdt.scores.pdf", p, width=16, height=10)        
+```
+
+## Interaction with gdt alleles 
+ <!-- grep("^TRDV", rownames(project.exp.mat), value=T) -->
+<!-- [1] "TRDV1" "TRDV2" "TRDV3" -->
+
+```{r}
+library(coxme)
+library(data.table)
+library(magrittr)
+library(parallel)
+library(survival)
+
+extract_coxme_table <- function (mod){
+    beta <- mod$coefficients #$fixed is not needed
+    nvar <- length(beta)
+    nfrail <- nrow(mod$var) - nvar
+    se <- sqrt(diag(mod$var)[nfrail + 1:nvar])
+    z<- round(beta/se, 2)
+    p<- signif(1 - pchisq((beta/se)^2, 1), 2)
+    table=data.frame(cbind(beta,se,z,p))
+    return(table)
+}
+
+eval.coxme = function(dat, dtx){
+    tryCatch(
+        {
+            dtx$col = dat
+            dtx = dtx[!is.na(col)]
+            dtx = dtx[dataset %in% names(which(table(dtx$dataset) > 10))] 
+            aa =  coxme(Surv(Survival, Event) ~ col + (1|dataset), dtx)
+            extract_coxme_table(aa)
+        },error=  function(e) rep(NA,4))
+}
+
+calculate.cox.interaction.pancancer.tr = function(dtx){
+    tryCatch(
+    {
+        dtx = dtx[!is.na(gene)]
+        dtx = dtx[dataset %in% names(which(table(dtx$dataset) > 10))]
+        dtx.summ =dtx[,.(var(gene)), by=dataset][V1 >1E-10]
+        dtx = dtx[dataset %in% dtx.summ$dataset]
+        aa =  coxme(Surv(Survival, Event) ~ gene + trg + gene*trg + (1|dataset), dtx)
+        tt = extract_coxme_table(aa)
+        tt["gene:trg",]
+    },
+    error=  function(e) rep(NA,4),
+    warning = function(e) rep(NA,4)
+    )
+}
+
+
+library(magrittr)
+project.exp = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
+library(SummarizedExperiment)
+project.exp.mat = assay(project.exp) %>%
+set_rownames(rowData(project.exp)$external_gene_name) %>% t %>% 
+ scale(., scale=T, center=T) %>% t 
+colnames(project.exp.mat) %<>% substring(.,1,16)
+
+dt.curr = colData(project.exp) %>% as.data.table %>%
+.[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
+dt.skcm = dt.curr[dataset == "TCGA-SKCM",] 
+project.skcm  = project.exp.mat[,dt.curr$dataset=="TCGA-SKCM"]
+
+trg.alleles = grep("^TRDV", rownames(project.exp.mat), value=T)
+
+trg.interaction.out = lapply(trg.alleles, function(trg.allele){ 
+    dt.curr[,trg:=project.exp.mat[trg.allele,]]
+    dataset.sel = sapply(unique(dt.curr$dataset), function(tt){
+    	out = F
+    	try({
+    	out = coxph(Surv(Survival, Event) ~ trg, data=dt.curr[dataset %in% tt]) %>% summary 
+    	xx = out$coefficient
+    	ifelse(xx[1] < 0 & xx[5] < 0.05, T, F)
+    })
+    }) %>% which %>% names
+    inx.sel = which(dt.curr$dataset %in% dataset.sel)
+    exp.sel = project.exp.mat[,inx.sel]
+    dt.sel = dt.curr[inx.sel,]
+    out = mclapply(seq(nrow(exp.sel)), function(ii) {
+        dt.sel[,gene:=exp.sel[ii,]]%>%
+        calculate.cox.interaction.pancancer.tr
+    }, mc.cores = 60) %>% 
+    do.call(rbind, .) %>%
+    as.data.table %>% 
+    set_colnames(c("estimate","se", "z", "P")) %>% 
+    .[,gene:=rownames(exp.sel)]
+}) 
+
+xx = project.exp.mat[grep("^TR[GD][VDJC]", rownames(project.exp.mat), value=T),]
+yy = project.exp.mat[c("BTN3A1" ,"BTN2A1"),]
+aa = cor(t(xx), t(yy))
+
+```
+## Interaction in melanoma only
+```{r}
+
+	library(survival)
+lsos = function (..., n = 10)
+{
+    .ls.objects(..., order.by = "Size", decreasing = TRUE, head = TRUE,
+        n = n)
+}
+
+calculate.cox.interaction.tr = function(dtx){
+    tryCatch(
+    {
+        dtx = dtx[!is.na(gene)]
+        aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
+      summary 
+    	xx = aa$coefficient
+        xx["gene:trg",]
+    },
+    error=  function(e) rep(NA,5),
+    warning = function(e) rep(NA,5)
+    )
+}
+
+# inx.skcm = which(dt.curr$dataset == "TCGA-SKCM")
+
+# dt.skcm=dt.curr[inx.skcm,] %>% scale(.,center=T, scale=T)
+# trg.alleles = grep("^TRGV", rownames(project.exp.mat), value=T)
+
+# project.exp ## SKCM specific
+# project.exp.mat = assay(project.exp) %>%
+# set_rownames(rowData(project.exp)$external_gene_name) %>% t %>% 
+#  scale(., scale=T, center=T) %>% t 
+# colnames(project.exp.mat) %<>% substring(.,1,16)
+
+# dt.skcm = colData(project.exp) %>% as.data.table %>%
+# .[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+# .[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+# .[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
+trg.alleles = grep("^TR[GD][VDJC]", rownames(project.exp.mat), value=T) 
+# c( c("TRDV1", "TRDV2", "TRGV1", "TRGV9", "TRGV6", "TRGV10", "TRGC1", "TRGC2") 
+
+trg.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){ 
+    dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
+      .[,CD8B:=project.skcm["CD8B",]]
+    out = mclapply(seq(nrow(project.skcm)), function(ii) {
+        dt.skcm[,gene:=project.skcm[ii,]]%>%
+        calculate.cox.interaction.tr
+    }, mc.cores = 60) %>% 
+    do.call(rbind, .) %>%
+    data.table %>% 
+    set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+    .[,gene:=rownames(project.skcm)]
+    out 
+}) 
+names(trg.interaction.out.skcm) = trg.alleles
+# trg.interaction.skcm.dt = lapply(trg.interaction.out.skcm, function(tt){
+# tt%<>% data.table 
+# tt$gene=rownames(project.skcm)
+# tt
+# })
+
+
+trg.cox.out = lapply(trg.alleles, function(trg.allele){ 
+      dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
+      .[,CD8B:=project.skcm["CD8B",]]
+      xx = rep(NA,5)
+      try({
+      	out = coxph(Surv(Survival, Event) ~ trg, data=dt.skcm) %>% summary 
+      	xx = out$coefficient["trg",]
+
+      })
+      xx
+    }) %>% do.call(rbind, .) %>%
+    data.table %>% 
+    set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+    .[,gene:=trg.alleles]
+
+
+trg.int.dt = lapply(names(trg.interaction.out.skcm), function(uu)
+{
+	tt = trg.interaction.out.skcm[[uu]]
+	
+	tt[,fdr:=p.adjust(P,method="fdr")]
+	tt[,up_or_down:=ifelse(z > 0 , "enhance", "dysfunction")] %>% 
+	.[,label:=uu]
+	tt = tt[fdr<0.1]
+	if(nrow(tt) > 200) tt = tt[order(abs(z), decreasing=T)[1:200]]
+	tt
+}) %>% do.call(rbind,.)
+
+gene.eg.dt = clusterProfiler::bitr(rownames(project.skcm), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>%
+data.table(.) %>%
+setkey(., SYMBOL) 
+
+trg.int.dt[,ENTREZID:= gene.eg.dt[match(trg.int.dt$gene, SYMBOL)]$ENTREZID]
+trg.int.dt = trg.int.dt[!is.na(ENTREZID)][label%in% c()]
+
+
+library(clusterProfiler)
+aa = trg.interaction.out.skcm$TRGC1[!is.na(z)]
+aa[,ENTREZID:= gene.eg.dt[match(aa$gene, SYMBOL)]$ENTREZID]
+aa = aa[!is.na(ENTREZID)][order(z)]
+
+geneList = (-1 *aa$z) %>% 
+set_names(aa$ENTREZID) %>%  
+sort(., decreasing = TRUE)
+geneList = geneList[!(names(geneList) %>% duplicated)]
+# ego3 <- gseGO(geneList     = geneList,
+#               OrgDb        = org.Hs.eg.db,
+#               ont          = "CC",
+#               nPerm        = 1000,
+#               minGSSize    = 100,
+#               maxGSSize    = 500,
+#               pvalueCutoff = 0.05,
+#               verbose      = FALSE)
+
+ego3 <- gseKEGG(geneList     = geneList,
+               organism     = 'hsa',
+               minGSSize    = 120,
+               pvalueCutoff = 0.05,
+               verbose      = FALSE)
+
+ p = dotplot(ego3, showCategory=30)
+ ggsave("results/.figs/skcm.trg.pathway.enhance.TRGC1.pdf", p)
+
+library(clusterProfiler)
+geneLists = sapply(trg.interaction.out.skcm, function(aa){
+	bb = aa[!is.na(z),]
+	bb$ENTREZID= gene.eg.dt[match(bb$gene, SYMBOL)]$ENTREZID
+	bb = bb[!is.na(ENTREZID)][order(z)]
+	geneList = bb$z %>% 
+	set_names(bb$ENTREZID) %>%  
+	sort(., decreasing = TRUE) 
+	# geneList = bb[order(z,decreasing=T)]$ENTREZID
+	geneList
+})
+geneLists = geneLists[sapply(geneLists, length) > 0]
+geneLists = geneLists[sort(names(geneLists))]
+xx <- myCompareCluster(geneLists, fun="gseKEGG", 
+			 organism     = 'hsa',
+               minGSSize    = 120,
+               pvalueCutoff = 0.01,
+               verbose      = FALSE)
+
+p <-  dotplot.compareClusterResult(xx, by="enrichmentScore", font.size=8, showCategory=7) + theme(axis.text.x = element_text(angle = 45))
+ggsave(file="results/.figs/all.trgs.skcm.pathway.pdf", p, width=12, height=10)
+
+```
+## Pathway enrichment
+```{r}
+library(plyr)
+
+dotplot.compareClusterResult <- function(object, x=~Cluster, colorBy="p.adjust",
+                                         showCategory=5, by="geneRatio",
+                                         split=NULL, includeAll=TRUE, font.size=12, title="") {
+
+    # df <- fortify(object, showCategory=showCategory, by=by,
+                  # includeAll=includeAll, split=split)
+	df = as.data.frame(object)
+    my.plotting.clusterProfile(df, x=x, type="dot", colorBy=colorBy,
+                            by=by, title=title, font.size=font.size)
+}
+
+my.plotting.clusterProfile <- function(clProf.reshape.df,
+                                    x = ~Cluster,
+                                    type = "dot",
+                                    colorBy = "p.adjust",
+                                    by = "geneRatio",
+                                    title="",
+                                    font.size=12) {
+    Description <- Percentage <- Count <- Cluster <- GeneRatio <- p.adjust <- pvalue <- NULL # to satisfy codetools
+    require(DOSE)
+    if (type == "bar") {
+        if (by == "percentage") {
+            p <- ggplot(clProf.reshape.df,
+                        aes(x=Description, y = Percentage, fill=Cluster))
+        } else if (by == "count") {
+            p <- ggplot(clProf.reshape.df,
+                        aes(x=Description, y = Count, fill=Cluster))
+        } else {
+
+        }
+        p <- p +
+            geom_bar() +
+                coord_flip()
+    }
+    if (type == "dot") {
+        if (by == "rowPercentage") {
+            p <- ggplot(clProf.reshape.df,
+                        aes_(x = x, y = ~Description, size = ~Percentage))
+        } else if (by == "count") {
+            p <- ggplot(clProf.reshape.df,
+                        aes_(x = x, y = ~Description, size = ~Count))
+        } else if (by == "geneRatio") {
+            p <- ggplot(clProf.reshape.df,
+                        aes_(x = x, y = ~Description, size = ~GeneRatio))
+        } else {
+        clProf.reshape.df$Cluster = factor(clProf.reshape.df$Cluster, levels=sort(as.character(unique(clProf.reshape.df$Cluster))))
+        # browser()	
+            p <- ggplot(clProf.reshape.df,
+                        aes_(x = x, y = ~Description, size = 0.3))
+        }
+        if (any(colnames(clProf.reshape.df) == colorBy)) {
+            p <- p +
+                geom_point() +
+                aes_string(color=colorBy) +
+                scale_color_continuous(low="red", high="blue", guide=guide_colorbar(reverse=TRUE))
+            ## scale_color_gradientn(guide=guide_colorbar(reverse=TRUE), colors = sig_palette)
+        } else {
+            p <- p + geom_point(colour="steelblue")
+        }
+    }
+    p <- p + xlab("") + ylab("") + ggtitle(title) +
+        theme_dose(font.size)
+    ## theme(axis.text.x = element_text(colour="black", size=font.size, vjust = 1)) +
+    ##     theme(axis.text.y = element_text(colour="black",
+    ##           size=font.size, hjust = 1)) +
+    ##               ggtitle(title)+theme_bw()
+    ## p <- p + theme(axis.text.x = element_text(angle=angle.axis.x,
+    ##                    hjust=hjust.axis.x,
+    ##                    vjust=vjust.axis.x))
+    return(p)
+}
+
+extract_params <- function(x) {
+    y <- rlang::quo_text(x)
+    if (is.function(x)) y <- sub('\nNULL$', '', y)
+
+    y <- gsub('"', '', y) %>%
+        sub(".*\\(", "", .) %>%
+        sub("\\)", "", .) %>%
+        gsub("\\s+", "", .)
+
+    y <- strsplit(y, ",")[[1]]
+    params <- sub("=.*", "", y)
+    vals <- sub(".*=", "", y)
+    i <- params != vals
+    params <- params[i]
+    vals <- vals[i]
+    names(vals) <- params
+    return(as.list(vals))
+}
+
+myCompareCluster = function (geneClusters, fun = "enrichGO", data = "", ...){
+	is.gse = substring(fun, 1,3) == "gse"
+    if (is.character(fun)) {
+        fun <- eval(parse(text = fun))
+    }
+    if (typeof(geneClusters) == "language") {
+        if (!is.data.frame(data)) {
+            stop("no data provided with formula for compareCluster")
+        }
+        else {
+            genes.var = all.vars(geneClusters)[1]
+            grouping.formula = gsub("^.*~", "~", as.character(as.expression(geneClusters)))
+            geneClusters = dlply(.data = data, formula(grouping.formula),
+                .fun = function(x) {
+                  as.character(x[[genes.var]])
+                })
+        }
+    }
+    # if(!is.gse){
+    	clProf <- llply(geneClusters, .fun = function(i) {
+    		x = NULL 
+    		try({
+    			x = suppressMessages(fun(i, ...))
+    		if (class(x) == "enrichResult" || class(x) == "groupGOResult" || class(x) == "gseaResult") {
+    			x = as.data.frame(x)
+    		}
+    	})
+    		x
+    	})
+    # }else{
+    # 	clProf <- lapply(geneClusters, function(i) {
+    # 		x = suppressMessages(fun(i, ...))
+    # 		as.data.frame(x)
+    # 	})
+
+    # }
+    clusters.levels = names(geneClusters)
+    clProf.df <- ldply(clProf, rbind)
+    # browser()
+    if(is.gse)  clProf.df$geneRatio = clProf.df$enrichmentScore
+    if (nrow(clProf.df) == 0) {
+        stop("No enrichment found in any of gene cluster, please check your input...")
+    }
+    clProf.df <- plyr::rename(clProf.df, c(.id = "Cluster"))
+    clProf.df$Cluster = factor(clProf.df$Cluster, levels = clusters.levels)
+    if (is.data.frame(data) && grepl("+", grouping.formula)) {
+        groupVarName <- strsplit(grouping.formula, split = "\\+") %>%
+            unlist %>% gsub("~", "", .) %>% gsub("^\\s*", "",
+            .) %>% gsub("\\s*$", "", .)
+        groupVars <- sapply(as.character(clProf.df$Cluster),
+            strsplit, split = "\\.") %>% do.call(rbind, .)
+        for (i in seq_along(groupVarName)) {
+            clProf.df[, groupVarName[i]] <- groupVars[, i]
+        }
+        i <- which(colnames(clProf.df) %in% groupVarName)
+        j <- (1:ncol(clProf.df))[-c(1, i)]
+        clProf.df <- clProf.df[, c(1, i, j)]
+    }
+    res <- new("compareClusterResult", compareClusterResult = clProf.df,
+        geneClusters = geneClusters, .call = match.call(expand.dots = TRUE))
+    params <- modifyList(extract_params(args(fun)), extract_params(res@.call))
+    keytype <- params[["keyType"]]
+    if (is.null(keytype))
+        keytype <- "UNKNOWN"
+    readable <- params[["readable"]]
+    res@keytype <- keytype
+    res@readable <- as.logical(readable)
+    res@fun <- params[["fun"]]
+    return(res)
+}
+	```
+
+## Read GO pathways 
+```{r}
+library(survminer)
+library(ggplot2)
+ go.pathways = qusage::read.gmt("~/liulab_home/data/pathways/download.baderlab.org/EM_Genesets/current_release/Human/symbol/Human_GOBP_AllPathways_with_GO_iea_June_01_2020_symbol.gmt")
+ search.inx1 = c("Cholesterol", 'vitamin k', "Coenzyme Q", "steroid", "Mevalonate", "LDL", "fatty acid")
+ search.inx2 = c("lipid", "endothelial", "pattern", "heat shock", "natural killer", "toll-like")
+ search.inx = c(search.inx1, search.inx2)
+pathway.sel = search.inx %>% sapply(., function(tt) 
+	grep(pattern=tt, names(go.pathways), value=T, ignore.case=T)
+	)
+pathway.curr = pathway.sel[search.inx1] %>% unlist
+genes.curr = go.pathways[pathway.curr] %>% unlist %>% unique
+go.pathways$"CHOLESTEROL BIOSYNTHESIS PATHWAY%WIKIPATHWAYS_20200510%WP197%HOMO SAPIENS"
+
+aa = trg.interaction.out.skcm$TRGV9[order(abs(z), decreasing=T)]
+
+nn =  grep("BTN3A1", go.pathways)
+genes.curr =  go.pathways$"T CELL RECEPTOR SIGNALING PATHWAY%GOBP%GO:0050852" %>% sort
+aa[gene %in% genes.curr]
+
+
+out = dt.skcm 
+avi.dt = out %>%
+.[,TRGC1:=project.skcm["TRGC1",]] %>% 
+.[,TRGC1:=ifelse(TRGC1> median(TRGC1),"high", "low")] %>% 
+.[,IGLV3:=as.numeric(project.skcm["IGLV3-13",])] %>% 
+.[,IGLV3:=ifelse(IGLV3> median(IGLV3),"high", "low")]
+
+fit1 <- survfit( Surv(Survival, Event) ~ IGLV3, data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "TRGC1",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/skcm.TRGC1.IGLV3-13.pdf")
+
+fit1 <- survfit( Surv(Survival, Event) ~ TRGC1, data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "IGLV3",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/skcm..IGLV3-13.TRGC1.pdf")
+
+avi.dt = trg.interaction.out.skcm$TRGC1
+tcga.surv.genes = readRDS("~/liulab_home/data/tcga/tcga.cox.genes.R")
+avi.dt = avi.dt[gene %in% tcga.surv.genes$OS$genes]
+library(EnhancedVolcano)
+p = EnhancedVolcano(avi.dt,
+	lab = avi.dt$gene,
+	x = 'estimate',
+	y = 'P',
+	pCutoff = 4E-5,
+	FCcutoff = .1,
+	pointSize = c(ifelse(avi.dt$fdr <  .03, 2, 1)),
+	labSize = 4.0,
+	legend=c('NS','Estimate','P value',
+		'P value & Estimate'),
+	legendPosition = 'bottom',
+	legendLabSize = 8,
+	legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	xlim = c(-.5, .5),
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+ggsave(file="results/.figs/trgc1.gene.interaction.pdf", p, width=10, height=8)
+
+```
+
+```{r}
+find.outliers <- function(x, y, limits = c(-Inf, Inf), ...) {
+  lo <- loess.smooth(x, y
+  fx <- approxfun(lo$x, lo$y * limits[1L])
+  fy <- approxfun(lo$x, lo$y * limits[2L])
+
+  which(y < fx(x) | y > fy(x))
+}
+fit.loess <- function(x, y, loess.spn=0.3, ...) {
+	dt = data.table(x=x,y=y)
+  fit <- loess(
+      formula = y~ x,
+      data = dt,
+      span = loess.spn
+    )
+  fit
+}
+
+
+get.enrich = function(genes, universe,
+	organism     = 'hsa',
+		pvalueCutoff = 0.05, ...) {
+	if( !sum(grepl("^[0-9]", universe)) > 100 ){
+		universe = clusterProfiler::bitr(universe, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+		genes =  universe[match(genes,universe$SYMBOL),]$ENTREZID
+		universe = universe$ENTREZID
+	}
+
+	kk <- clusterProfiler::enrichKEGG(gene         = genes, 
+		universe = universe,
+		organism     = organism,
+		pvalueCutoff = pvalueCutoff,
+		...
+		)
+	clusterProfiler::dotplot(kk, showCategory=30) 
+}
+```
+
+## Correlate between markers of TLS/GCR and gdT
+```{r}
+
+## Identify  TLS genes correled with TRD allele levels. 
+tls.genes = c("MS4A1", "CD40", "CXCR5", "CXCL13", "CCR7", "CCL19",  "CD8B", "PDCD1",  "CTLA4","HAVCR2", "CD274", "PDCD1LG2")
+setdiff(tls.genes, rownames(project.skcm))
+grep("TRBV", rownames(project.skcm), value=T)
+temp = c("TRDV2", "TRGV9", "TRBV2")
+trg.alleles = grep("^TR[GD]V",rownames(project.skcm), value=T) %>% sort
+trg.alleles = c(temp, setdiff(trg.alleles , temp))
+trg.crispr.cor = WGCNA::corAndPvalue(project.skcm[trg.alleles,] %>% t, project.skcm[tls.genes,] %>% t)
+library(corrplot)
+pdf("results/.figs/gdt/cor.trg.tls.pdf", width=8, height=8)
+# corrplot(trg.crispr.cor$cor, p.mat = trg.crispr.cor$p, insig = "label_sig",
+         # sig.level = c(1E-8, 1E-3, .01), pch.cex = .9, pch.col = "white")
+corrplot(trg.crispr.cor$cor[,1:7], method="square")
+corrplot(trg.crispr.cor$cor[,7:12], method="square")
+
+dev.off()
+
+trg.crispr.cor = WGCNA::corAndPvalue(x=project.skcm[trg.alleles,] %>% t, 
+	y=(project.skcm[setdiff(rownames(project.skcm), trg.alleles),] %>% t))
+# avi.dt = data.table(
+# 	cor=trg.crispr.cor$cor["TRDV2",], 
+# 	p=trg.crispr.cor$p["TRDV2",],
+# 	gene = colnames(trg.crispr.cor$cor)
+# 	)
+# avi.dt = avi.dt[!is.na(p)]
+
+
+
+avi.dt = trg.crispr.cor$cor[c("TRDV2", "TRDV1", "TRDV3"),] %>% t  %>% data.table %>%
+	.[,gene:= colnames(trg.crispr.cor$cor)] %>%
+	.[!(is.na(TRDV1) | is.na(TRDV2))]
+
+# aa = find.outliers(trg.crispr.cor$cor["TRDV1",], trg.crispr.cor$cor["TRDV2",], limits=c(100,1/100))
+aa = fit.loess(avi.dt$TRDV1, avi.dt$TRDV2)
+inx.pos = (avi.dt$TRDV2 - aa$fitted) %>% order(decreasing=T) %>% 
+.[1:40]
+inx.neg = (aa$fitted- avi.dt$TRDV2 ) %>% order(decreasing=T) %>% 
+.[1:30]
+# avi.dt.sub = avi.dt[inx]
+avi.dt.sub = avi.dt[unique(c(
+	order(avi.dt$TRDV1,decreasing=F)[1:30],
+	order(avi.dt$TRDV2,decreasing=F)[1:30],
+	order(avi.dt$TRDV1,decreasing=T)[1:40],
+	order(avi.dt$TRDV2,decreasing=T)[1:40], 
+	inx.pos,
+	inx.neg
+	))]
+p.sc.volcano = ggplot(data=avi.dt, aes(x=TRDV1, y= TRDV2))  + 
+geom_point(alpha=0.5) +
+theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+geom_text_repel(
+	data = avi.dt.sub,
+	 aes(x = TRDV1, y = TRDV2, label = gene),    
+	 size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+    )  
+
+ggsave(file="results/.figs/gdt/gene.cor.trdv2.trdv1.pdf", p.sc.volcano, width=16, height=10)
+
+avi.sel=avi.dt[TRDV1>0.5 & TRDV2 > 0.4]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv2.pos.trdv1.pos.pdf",p)
+
+try({
+p = get.enrich(genes=avi.dt[inx.pos]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv2.pos.trdv1.neg.pdf",p)
+})
+
+try({
+p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv2.neg.trdv1.pos.pdf",p)
+})
+
+avi.sel=avi.dt[intersect(
+	order(avi.dt$TRDV2,decreasing=F)[1:200], 
+	order(avi.dt$TRDV1,decreasing=F)[1:200] )]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv2.neg.trdv1.neg.pdf",p)
+
+
+aa = fit.loess(avi.dt$TRDV1, avi.dt$TRDV3)
+inx.pos = (avi.dt$TRDV3 - aa$fitted) %>% order(decreasing=T) %>% 
+.[1:40]
+inx.neg = (aa$fitted- avi.dt$TRDV3 ) %>% order(decreasing=T) %>% 
+.[1:30]
+# avi.dt.sub = avi.dt[inx]
+avi.dt.sub = avi.dt[unique(c(
+	order(avi.dt$TRDV1,decreasing=F)[1:30],
+	order(avi.dt$TRDV3,decreasing=F)[1:30],
+	order(avi.dt$TRDV1,decreasing=T)[1:40],
+	order(avi.dt$TRDV3,decreasing=T)[1:40], 
+	inx.pos,
+	inx.neg
+	))]
+p.sc.volcano = ggplot(data=avi.dt, aes(x=TRDV1, y= TRDV3))  + 
+geom_point(alpha=0.5) +
+theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+geom_text_repel(
+	data = avi.dt.sub,
+	 aes(x = TRDV1, y = TRDV3, label = gene),    
+	 size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+    )  
+
+ggsave(file="results/.figs/gdt/gene.cor.trdv3.trdv1.pdf", p.sc.volcano, width=16, height=10)
+
+
+avi.sel=avi.dt[TRDV1>0.5 & TRDV3 > 0.4]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv3.pos.trdv1.pos.pdf",p)
+
+try({
+p = get.enrich(genes=avi.dt[inx.pos]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv3.pos.trdv1.neg.pdf",p)
+})
+
+try({
+p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv3.neg.trdv1.pos.pdf",p)
+})
+
+avi.sel=avi.dt[intersect(
+	order(avi.dt$TRDV3,decreasing=F)[1:200], 
+	order(avi.dt$TRDV1,decreasing=F)[1:200] )]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trdv3.neg.trdv1.neg.pdf",p)
+
+
+
+library(ggplot2)
+library(ggrepel)
+avi.dt = trg.crispr.cor$cor[c("TRGV2", "TRGV9", "TRGV10"),] %>% t  %>% data.table %>%
+	.[,gene:= colnames(trg.crispr.cor$cor)] %>%
+	.[!(is.na(TRGV2) | is.na(TRGV2))]
+aa = fit.loess(avi.dt$TRGV2, avi.dt$TRGV9)
+inx.pos = (avi.dt$TRGV9 - aa$fitted) %>% order(decreasing=T) %>% 
+.[1:70]
+inx.neg = (aa$fitted- avi.dt$TRGV9 ) %>% order(decreasing=T) %>% 
+.[1:70]
+# avi.dt.sub = avi.dt[inx]
+avi.dt.sub = avi.dt[unique(c(
+	order(avi.dt$TRGV2,decreasing=F)[1:30],
+	order(avi.dt$TRGV9,decreasing=F)[1:30],
+	order(avi.dt$TRGV2,decreasing=T)[1:40],
+	order(avi.dt$TRGV9,decreasing=T)[1:40], 
+	inx.pos,
+	inx.neg
+	))]
+p.sc.volcano = ggplot(data=avi.dt, aes(x=TRGV2, y= TRGV9))  + 
+geom_point(alpha=0.5) +
+theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+geom_text_repel(
+	data = avi.dt.sub,
+	 aes(x = TRGV2, y = TRGV9, label = gene),    
+	 size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+    )  
+
+ggsave(file="results/.figs/gdt/gene.cor.trgv9.trgv2.pdf", p.sc.volcano, width=16, height=10)
+
+avi.sel=avi.dt[intersect(
+	order(avi.dt$TRGV9,decreasing=T)[1:200], 
+	order(avi.dt$TRGV2,decreasing=T)[1:200] )]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trgv9.pos.trgv2.pos.pdf",p)
+
+try({
+p = get.enrich(genes=avi.dt[inx.pos]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trgv9.pos.trgv2.neg.pdf",p)
+})
+
+try({
+p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trgv9.neg.trgv2.pos.pdf",p)
+})
+
+avi.sel=avi.dt[intersect(
+	order(avi.dt$TRGV9,decreasing=F)[1:200], 
+	order(avi.dt$TRGV2,decreasing=F)[1:200] )]
+p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
+ggsave(file="results/.figs/gdt/pathway.cor.trgv9.neg.trgv2.neg.pdf",p)
+
+
+
+```
+## correlate with singler annotation
+```{r}
+cor.out = lapply(singleR.dataset, function(ii) calculate.singleR.corelation(mat=project.skcm, ref.data=ii)) 
+
+skcm.cor.out = do.call(rbind,cor.out)
+cell.types =  rownames(skcm.cor.out) %>% unique
+skcm.cor.unique = sapply( cell.types, function(tt){
+	inx = which(rownames(skcm.cor.out) == tt)
+	if(length(inx) > 1){
+		out = skcm.cor.out[inx,] %>% colMeans(na.rm=T)
+	}else{
+		out = skcm.cor.out[inx,]
+	}
+	out
+} ) %>% t
+
+trg.singler.cor = WGCNA::corAndPvalue(x=project.skcm[trg.alleles,] %>% t, 
+	y=(skcm.cor.unique %>% t))
+
+avi.dt = trg.singler.cor$cor[c("TRDV2", "TRDV1", "TRDV3"),] %>% t  %>% data.table %>%
+	.[,gene:= colnames(trg.singler.cor$cor)] %>%
+	.[!(is.na(TRDV1) | is.na(TRDV2))]
+
+aa = fit.loess(avi.dt$TRDV1, avi.dt$TRDV2)
+inx.pos = (avi.dt$TRDV2 - aa$fitted) %>% order(decreasing=T) %>% 
+.[1:40]
+inx.neg = (aa$fitted- avi.dt$TRDV2 ) %>% order(decreasing=T) %>% 
+.[1:30]
+# avi.dt.sub = avi.dt[inx]
+avi.dt.sub = avi.dt[unique(c(
+	order(avi.dt$TRDV1,decreasing=F)[1:30],
+	order(avi.dt$TRDV2,decreasing=F)[1:30],
+	order(avi.dt$TRDV1,decreasing=T)[1:40],
+	order(avi.dt$TRDV2,decreasing=T)[1:40], 
+	inx.pos,
+	inx.neg
+	))]
+p.sc.volcano = ggplot(data=avi.dt, aes(x=TRDV1, y= TRDV2))  + 
+geom_point(alpha=0.5) +
+theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+geom_text_repel(
+	data = avi.dt.sub,
+	 aes(x = TRDV1, y = TRDV2, label = gene),    
+	 size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+    )  
+
+ggsave(file="results/.figs/gdt/singler.cor.trdv2.trdv1.pdf", p.sc.volcano, width=16, height=10)
+
+
+avi.dt[grep("GC", avi.dt$gene)]
+grep("Germinal", rownames(skcm.cor.unique), value=T)
+
+lapply(singleR.dataset, 
+```
+## TLS makers are only important in presenence of gdt cells. 
+```{r}
+library(coxme)
+library(data.table)
+library(magrittr)
+library(parallel)
+library(survival)
+library(survminer)
+
+calculate.cox.interaction = function(dtx){
+	tryCatch(
+	{
+		dtx = dtx[!is.na(gene)]
+		aa =  coxph(Surv(Survival, Event) ~ gene + cell.type + gene*cell.type, dtx)
+		summary(aa)$coefficients[,c(1,5)] %>% t%>% c
+	},
+	error=  function(e) rep(NA,6)
+	)
+
+}
+
+calculate.cox.interaction.tr = function(dtx){
+    tryCatch(
+    {
+        dtx = dtx[!is.na(gene)]
+        aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
+      summary 
+    	xx = aa$coefficient
+        xx["gene:trg",]
+    },
+    error=  function(e) rep(NA,5),
+    warning = function(e) rep(NA,5)
+    )
+}
+tls.cox.out = lapply(tls.genes, function(tls.gene){ 
+      dt.skcm[,trg:=project.skcm[tls.gene,]]
+      xx = rep(NA,5)
+      try({
+      	out = coxph(Surv(Survival, Event) ~ trg, data=dt.skcm) %>% summary 
+      	xx = out$coefficient["trg",]
+
+      })
+
+
+tls.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){ 
+    dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
+      .[,CD8B:=project.skcm["CD8B",]]
+    out = mclapply(tls.genes, function(ii) {
+        dt.skcm[,gene:=project.skcm[ii,]]%>%
+        calculate.cox.interaction.tr
+    }, mc.cores = 60) %>% 
+    do.call(rbind, .) %>%
+    data.table %>% 
+    set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+    .[,gene:=tls.genes]
+    out 
+}) 
+names(tls.interaction.out.skcm) = trg.alleles
+tls.interaction.mat = lapply(tls.interaction.out.skcm, function(tt) {
+	ifelse(tt$P<0.03, tt$z,0)
+} )%>% do.call(rbind, .) %>% 
+set_colnames(tls.genes)
+
+sel = apply(tls.interaction.mat,1,function(tt) tt %>% is.na %>% sum) < length(tls.genes)
+tls.interaction.mat = tls.interaction.mat[sel,]
+pdf("results/.figs/gdt/interaction.trg.pdf", width=16, height=8)
+corrplot(tls.interaction.mat, is.corr = FALSE, method = "square")
+dev.off()
+
+out = dt.skcm 
+avi.dt = out %>%
+.[,TRDV2:=project.skcm["TRDV2",]] %>% 
+.[,TRDV2:=ifelse(TRDV2> median(TRDV2),"high", "low")] %>% 
+.[,CXCL13:=as.numeric(project.skcm["CXCL13",])] %>% 
+.[,CXCL13:=ifelse(CXCL13> median(CXCL13),"high", "low")]
+
+fit1 <- survfit( Surv(Survival, Event) ~ CXCL13, data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "TRDV2",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/gdt/TRDV2.CXCL13.km.pdf")
+
+fit1 <- survfit( Surv(Survival, Event) ~TRDV2 , data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "CXCL13",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/gdt/CXCL13.TRDV2.km.pdf")
+
+
+out = dt.skcm 
+avi.dt = out %>%
+.[,TRDV1:=project.skcm["TRDV1",]] %>% 
+.[,TRDV1:=ifelse(TRDV1> median(TRDV1),"TRDV1-high", "TRDV1-low")] %>% 
+.[,MS4A1:=as.numeric(project.skcm["MS4A1",])] %>% 
+.[,MS4A1:=ifelse(MS4A1> median(MS4A1),"MS4A1-high", "MSV4A1-low")]
+
+fit1 <- survfit( Surv(Survival, Event) ~ MS4A1, data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "TRDV1",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/gdt/TRDV1.MS4A1.km.pdf")
+
+fit1 <- survfit( Surv(Survival, Event) ~TRDV1 , data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "MS4A1",  palette = "jco", pval = TRUE)
+ggsave("results/.figs/gdt/MS4A1.TRDV1.km.pdf")
+
+```

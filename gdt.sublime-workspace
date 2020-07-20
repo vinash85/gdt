@@ -1,0 +1,1064 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+			[
+				"ipdb",
+				"ipdb.set_trace"
+			],
+			[
+				"embedding",
+				"embedding_size"
+			],
+			[
+				"nan",
+				"nan\tstatement"
+			],
+			[
+				"label",
+				"label_inx"
+			],
+			[
+				"define",
+				"define_metrics\t(net.py)"
+			],
+			[
+				"tensorboard",
+				"tensorboard_dir\tparam"
+			],
+			[
+				"dropout",
+				"dropout_rate\tstatement"
+			],
+			[
+				"restore",
+				"restore_file\tparam"
+			],
+			[
+				"batches",
+				"batches_curr\tstatement"
+			],
+			[
+				"shuffle",
+				"shuffle_inx"
+			],
+			[
+				"survival",
+				"survival_size\tstatement"
+			],
+			[
+				"binary_output",
+				"binary_output_size\tparam"
+			],
+			[
+				"calc",
+				"calculate_auc"
+			],
+			[
+				"batch",
+				"batch_num\tstatement"
+			],
+			[
+				"na",
+				"na_inx"
+			],
+			[
+				"linear_outputs",
+				"linear_output_size\tstatement"
+			],
+			[
+				"out_channels",
+				"out_channels_list\tparam"
+			],
+			[
+				"embed",
+				"embedding_model"
+			],
+			[
+				"input",
+				"input_size"
+			],
+			[
+				"linea",
+				"linear_output_size"
+			],
+			[
+				"embe",
+				"embedding_size"
+			]
+		]
+	},
+	"buffers":
+	[
+	],
+	"build_system": "",
+	"build_system_choices":
+	[
+		[
+			[
+				[
+					"Packages/Vintageous/Vintageous.sublime-build",
+					""
+				],
+				[
+					"Packages/Vintageous/Vintageous.sublime-build",
+					"Vintageous - Test (All)"
+				],
+				[
+					"Packages/Vintageous/Vintageous.sublime-build",
+					"Vintageous - Test (This File Only)"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					""
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Traditional"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"PdfLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"XeLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"LuaLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Basic Builder"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Basic Builder - PdfLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Basic Builder - XeLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Basic Builder - LuaLaTeX"
+				],
+				[
+					"Packages/LaTeXTools/LaTeX.sublime-build",
+					"Script Builder"
+				]
+			],
+			[
+				"Packages/LaTeXTools/LaTeX.sublime-build",
+				"PdfLaTeX"
+			]
+		]
+	],
+	"build_varint": "",
+	"command_palette":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"ayu",
+				"ayu: Activate theme"
+			],
+			[
+				"laex",
+				"Build With: LaTeX - Traditional"
+			],
+			[
+				"latex",
+				"Build With: LaTeX"
+			],
+			[
+				"inst",
+				"Package Control: Install Package"
+			],
+			[
+				"col",
+				"UI: Select Color Scheme"
+			],
+			[
+				"color",
+				"UI: Select Color Scheme"
+			],
+			[
+				"ay",
+				"ayu: Activate theme"
+			],
+			[
+				"insta",
+				"Package Control: Install Package"
+			],
+			[
+				"packa",
+				"Package Control: Add Channel"
+			],
+			[
+				"ins",
+				"Package Control: Install Package"
+			],
+			[
+				"revert",
+				"File: Revert"
+			],
+			[
+				"rever",
+				"File: Revert"
+			],
+			[
+				"colors",
+				"UI: Select Color Scheme"
+			],
+			[
+				"them",
+				"UI: Select Theme"
+			],
+			[
+				"AYU",
+				"ayu: Activate theme"
+			],
+			[
+				"avy",
+				"ayu: Activate theme"
+			],
+			[
+				"comapre",
+				"Compare with..."
+			],
+			[
+				"markdow",
+				"Markdown Preview: Preview in Browser"
+			],
+			[
+				"markd",
+				"MarkdownLivePreview: Edit Current File"
+			],
+			[
+				"install",
+				"Package Control: Install Package"
+			],
+			[
+				"PRV",
+				"PackageResourceViewer: Open Resource"
+			],
+			[
+				"PRV: ",
+				"PackageResourceViewer: Open Resource"
+			],
+			[
+				"auy",
+				"ayu: Activate theme"
+			],
+			[
+				"colo",
+				"UI: Select Color Scheme"
+			],
+			[
+				"compre",
+				"Compare with..."
+			],
+			[
+				"instal",
+				"Package Control: Install Package"
+			],
+			[
+				"send",
+				"SendCode: Choose Program"
+			],
+			[
+				"scol",
+				"UI: Select Color Scheme"
+			],
+			[
+				"lint",
+				"Anaconda: Enable linting on this file"
+			],
+			[
+				"disable lin",
+				"Anaconda: Disable linting on this file"
+			],
+			[
+				"pep",
+				"Anaconda: Autoformat PEP8 Errors"
+			],
+			[
+				"wra",
+				"Word Wrap: Toggle"
+			],
+			[
+				"autoform",
+				"Anaconda: Autoformat PEP8 Errors"
+			],
+			[
+				"pep8",
+				"Anaconda: Autoformat PEP8 Errors"
+			],
+			[
+				"autopep",
+				"Anaconda: Autoformat PEP8 Errors"
+			],
+			[
+				"vinta",
+				"Vintageous: Open .vintageousrc"
+			],
+			[
+				"vintageou",
+				"Set Syntax: Vintageous Command Line"
+			],
+			[
+				"disable",
+				"Package Control: Disable Package"
+			],
+			[
+				"theme",
+				"UI: Select Theme"
+			],
+			[
+				"wordHi",
+				"WordHighlight: Toggle Enabled"
+			],
+			[
+				"sendC",
+				"SendCode: Choose Program"
+			],
+			[
+				"sidebar",
+				"View: Toggle Open Files in Side Bar"
+			],
+			[
+				"in",
+				"Package Control: Install Package"
+			],
+			[
+				"Instal",
+				"Package Control: Install Package"
+			],
+			[
+				"wrap",
+				"Word Wrap: Toggle"
+			]
+		],
+		"width": 0.0
+	},
+	"console":
+	{
+		"height": 351.0,
+		"history":
+		[
+		]
+	},
+	"distraction_free":
+	{
+		"menu_visible": true,
+		"show_minimap": false,
+		"show_open_files": false,
+		"show_tabs": false,
+		"side_bar_visible": false,
+		"status_bar_visible": false
+	},
+	"file_history":
+	[
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/gdt/src/gdt/gdt.sublime-workspace",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/liu/pi3k/run.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/simple/determine.gdT.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/gdt/src/gdt/test.exterme.Rmd",
+		"/Users/avi/kraken/src/temp",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/simple/process.ICB.Rmd",
+		"/Users/avi/kraken/src/dcohen.run.sh",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/scarlett/src/pik3ca.deg.R",
+		"/Users/avi/softwares/avinash.scRNA/R/eval.singleR.R",
+		"/Users/avi/kraken/TRUST_GO29293_ngs_rna_targrna_rnaaccess_SAM1dda30f1c5be_20150628_cdr3.out",
+		"/Users/avi/.cvimrc",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/liu/jian/callCDR3fromSCbam.avi.p20.sh",
+		"/Users/avi/Downloads/hgnc.txt",
+		"/Users/avi/Downloads/signature.exclusion",
+		"/Users/avi/Downloads/mart_export.txt",
+		"/Users/avi/Downloads/xtemp.txt",
+		"/Applications/Adobe Illustrator CC 2018/Support Files/AMT/AI/AMT/application.xml",
+		"/Applications/Adobe Photoshop CC 2018/Presets/Scripts/ContactSheetII.jsx",
+		"/Applications/Adobe Illustrator CC 2018/AIFeatures.cfg",
+		"/Users/avi/Downloads/runTRUSTonMergedBAM.sh",
+		"/Users/avi/Downloads/callCDR3fromSCbam.avi.sh",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190612-072724/best_val_0.csv",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190612-072724/last_val_0.csv",
+		"/Users/avi/Dropbox (Partners HealthCare)/resume/current/avinash_05012019.tex",
+		"/Users/avi/Downloads/untitled.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/resume/current/avinash_04012019.tex",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190609-202441/best_val_0.csv",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190607-091800/best_val_0.csv",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190607-091800/params.json",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/RCC_PD1_Miao/val_prediction.csv",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/results/may24/Bladder_melanoma_tcga.pdf",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/source.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/datasets_tsne_list.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/auc.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/params.json",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/source.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/run.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/geentech.imputed.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/datasets_tsne_list.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/gene_quantification.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/drugs/TCGA_msigdb.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/check.sign.cox.coef.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/kidney.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/drugs/ICB_msigdb.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/process.dataset.genentech.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/datasets_genentech_list.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/r2python.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/process.dataset.RCC_PD1_Miao.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train_attention.py",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190529-194121/best_val_0.csv",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/tensorboardLog/20190529-184401/best_val_0.csv",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/utils.py",
+		"/Users/avi/projects/deepImmune/data/RCC_PD1_Miao/datasets_list.txt",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/datasets_tsne_list.txt",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/params.json",
+		"/Users/avi/Library/Containers/com.apple.mail/Data/Library/Mail Downloads/C737AC8C-7816-4DD4-AB78-FC5598F1B9A6/ariel.brown.pub",
+		"/Users/avi/Downloads/Hi Xiaoman,",
+		"/Users/avi/Library/Containers/com.apple.mail/Data/Library/Mail Downloads/6AAD0234-EE8E-48A4-808E-944C61ABFFBF/ariel.brown.pub",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.Mel_CTLA4_Chiappinelli.R",
+		"/Users/avi/temp1.txt",
+		"/Users/avi/.bashrc",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/val_prediction.csv",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/datasets_tsne_list",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/source.goldenset.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/params.json",
+		"/Users/avi/projects/deepImmune/data/genentech.tpm/neoantigen.v2/impute/params.json",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.Mel_PD1_Hugo.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/genetech.data.analysis.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.mGC_PD1_Kim.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/comparison_with_tcga.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/val_prediction.csv",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/datasets_tsne_list.txt",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug/params.json",
+		"/Users/avi/Downloads/blacklists/adult/domains",
+		"/Users/avi/Downloads/blacklists/adult/urls",
+		"/Users/avi/Dropbox (Partners HealthCare)/resume/current/avinash_01312019.tex",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/temp.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/tcga/neoantigen.v2/attention/tcga.imputed/TCGA_Drugssgsva.txt",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/drug_effect_sign.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plot.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/params",
+		"/Users/avi/Dropbox (Partners HealthCare)/Documents/tax/2019/tax.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/genentech.imputed/params.json",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/genentech.imputed/datasets_tsne_list.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/liu/amy/findInteractionWilcox.parallel.R",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/genentech.imputed/datasets_list.txt",
+		"/Users/avi/envs/pytorch3/lib/python3.7/site-packages/tensorboardX/embedding.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/correlation.immunological.phenotype.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/ya/process.dataset.ccle.R",
+		"/Users/avi/delete/temp1/tensorboardX/tensorboardX/visdom_writer.py",
+		"/Users/avi/delete/temp1/tensorboardX/examples/demo_multiple_embedding.py",
+		"/Users/avi/Downloads/temp1.py",
+		"/Users/avi/delete/temp1/tensorboardX/tests/test_embedding.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/archives/iorio/gene_13999_expression_crispr_essential_554_cellline.txt",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/temp/source.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/temp/comparison.v1.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/temp/comparison_with_tcga.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/impute.genentech.neoantigen_plus.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/cell.revision/science.revision/msb.revision/parameter.robustness.R",
+		"/Users/avi/Downloads/metadata-edited.tsv",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/temp/temp.py",
+		"/etc/ssh/sshd_config",
+		"/Users/avi/.ssh/config",
+		"/Users/avi/.ssh/authorized_keys",
+		"/Users/avi/Downloads/tax.R",
+		"/Users/avi/Downloads/impute.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/run_hyper.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/NB_data_process.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/ggrocs.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/source.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/transformer.py",
+		"/Users/avi/projects/deepImmune/data/tcga/neoantigen.v2/attention/temp.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/immunotherapy/cidc/mda_broad_comparison/testing_combat.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.icb.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/immunological_correlation.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/srescues/liu/amy/src/crispr.sl.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/debug/debug.py",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune.back1/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.tcga.R",
+		"/Users/avi/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/common.genes.R"
+	],
+	"find":
+	{
+		"height": 54.0
+	},
+	"find_in_files":
+	{
+		"height": 134.0,
+		"where_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": false,
+		"replace_history":
+		[
+		],
+		"reverse": false,
+		"show_context": true,
+		"use_buffer2": true,
+		"whole_word": false,
+		"wrap": true
+	},
+	"groups":
+	[
+		{
+			"sheets":
+			[
+			]
+		}
+	],
+	"incremental_find":
+	{
+		"height": 29.0
+	},
+	"input":
+	{
+		"height": 125.0
+	},
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			]
+		],
+		"cols":
+		[
+			0.0,
+			1.0
+		],
+		"rows":
+		[
+			0.0,
+			1.0
+		]
+	},
+	"menu_visible": true,
+	"output.SublimeLinter":
+	{
+		"height": 0.0
+	},
+	"output.diagnostics":
+	{
+		"height": 0.0
+	},
+	"output.find_results":
+	{
+		"height": 0.0
+	},
+	"output.latextools":
+	{
+		"height": 208.0
+	},
+	"output.mdpopups":
+	{
+		"height": 0.0
+	},
+	"pinned_build_system": "",
+	"project": "gdt.sublime-project",
+	"replace":
+	{
+		"height": 94.0
+	},
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"evalu",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py"
+			],
+			[
+				"net",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train_attention.py"
+			],
+			[
+				"eva",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py"
+			],
+			[
+				"cha",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.Mel_CTLA4_Chiappinelli.R"
+			],
+			[
+				"kir",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/kidney.R"
+			],
+			[
+				"eval",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py"
+			],
+			[
+				"val",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate.py"
+			],
+			[
+				"param",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/params.json"
+			],
+			[
+				"params.",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/params.json"
+			],
+			[
+				"data",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py"
+			],
+			[
+				"dataset",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/datasets_tsne_list.txt"
+			],
+			[
+				"mia",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/process.dataset.RCC_PD1_Miao.R"
+			],
+			[
+				"",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/imputation/process.dataset.genentech.R"
+			],
+			[
+				"tcga",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R"
+			],
+			[
+				"EVA",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py"
+			],
+			[
+				"ICB",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/drugs/ICB_msigdb.R"
+			],
+			[
+				"datas",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/datasets_tsne_list.txt"
+			],
+			[
+				"pra",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/tcga.imputed/params.json"
+			],
+			[
+				"para",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py"
+			],
+			[
+				"gene",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R"
+			],
+			[
+				"run",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"pa",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/params.json"
+			],
+			[
+				"run.s",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"tra",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py"
+			],
+			[
+				"ne",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"par",
+				"~/projects/deepImmune/data/tcga/neoantigen.v2/attention/params.json"
+			],
+			[
+				"imput",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R"
+			],
+			[
+				"tem",
+				"~/Downloads/temp1.py"
+			],
+			[
+				"e",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate_attention.py"
+			],
+			[
+				"temp",
+				"~/Downloads/temp1.py"
+			],
+			[
+				"tme",
+				"~/Downloads/temp1.py"
+			],
+			[
+				"temp1",
+				"~/Downloads/temp1.py"
+			],
+			[
+				"runs",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"net.p",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"train",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train_attention.py"
+			],
+			[
+				"train_atte",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train_attention.py"
+			],
+			[
+				"ev",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate.py"
+			],
+			[
+				"deb",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/debug/debug.py"
+			],
+			[
+				"de",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/debug/debug.py"
+			],
+			[
+				"trai",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py"
+			],
+			[
+				"ya",
+				"~/Downloads/ya.R"
+			],
+			[
+				"impuata",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune.back1/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R"
+			],
+			[
+				"main",
+				"~/Dropbox/project/code/deeplearning/pytorch/tutorial/pytorch-tutorial/tutorials/02-intermediate/deep_residual_network/main.py"
+			],
+			[
+				"mai",
+				"~/Dropbox/project/code/deeplearning/pytorch/tutorial/pytorch-tutorial/tutorials/02-intermediate/deep_residual_network/main.py"
+			],
+			[
+				"trans",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/transformer.py"
+			],
+			[
+				"tran",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py"
+			],
+			[
+				"kim",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.mGC_PD1_Kim.R"
+			],
+			[
+				"impute",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/impute.genentech.neoantigen_plus.R"
+			],
+			[
+				"impu",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune.back1/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R"
+			],
+			[
+				"t",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py"
+			],
+			[
+				"r",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"genet",
+				"~/Dropbox/project/code/immunotherapy/cidc/mda_broad_comparison/gene_quantification.R"
+			],
+			[
+				"imputat",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune.back1/deepImmune/data_processing/ssgsea/process.dataset.imputation.tcga.R"
+			],
+			[
+				"process",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.mGC_PD1_Kim.R"
+			],
+			[
+				"p",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/tcga/PCA/params.json"
+			],
+			[
+				"icb",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.icb.R"
+			],
+			[
+				"ru",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"parm",
+				"~/Dropbox/project/code/immunotherapy/cidc/mda_broad_comparison/gene_quantification.R"
+			],
+			[
+				"hyp",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/run_hyper.R"
+			],
+			[
+				"genete",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/genetech.data.analysis.R"
+			],
+			[
+				"parma",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genentech.tpm/Neoantigen.imputed/params.json"
+			],
+			[
+				"pram",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genentech.tpm/Neoantigen.imputed/params.json"
+			],
+			[
+				"hype",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/plots/run_hyper.R"
+			],
+			[
+				"debu",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/debug/debug.py"
+			],
+			[
+				"gen",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R"
+			],
+			[
+				"genen",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R"
+			],
+			[
+				"bet",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"Dr",
+				"~/Dropbox (Partners HealthCare)/drugBank/Drug_target_interactions.txt"
+			],
+			[
+				"ut",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/utils.py"
+			],
+			[
+				"uti",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/utils.py"
+			],
+			[
+				"lin",
+				"~/Downloads/linearRegression.py"
+			],
+			[
+				"u",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"rus",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"rne",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"tcg",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.tcga.R"
+			],
+			[
+				"params",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genentech.tpm/genentech.pca.tpm.phenotypes/params.json"
+			],
+			[
+				"proc",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R"
+			],
+			[
+				"genee",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.genentech.R"
+			],
+			[
+				"proce",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/process.dataset.tcga.R"
+			],
+			[
+				"met",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"sour",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/source.R"
+			],
+			[
+				"sor",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/source.R"
+			],
+			[
+				"e va",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate.py"
+			],
+			[
+				"test",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/test_tcga/datasets_list.txt"
+			],
+			[
+				"pr",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genetech.imputed/params.json"
+			],
+			[
+				"run.",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"n",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"da",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py"
+			],
+			[
+				"tr",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genetech.imputed/train.log"
+			],
+			[
+				"a",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genetech.imputed/params.json"
+			],
+			[
+				"tar",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py"
+			],
+			[
+				"eav",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/evaluate.py"
+			],
+			[
+				"datat",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/data_generator.py"
+			],
+			[
+				"gener",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/test/simulation/generate_multiple_outputs.py"
+			],
+			[
+				"net.",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/model/net.py"
+			],
+			[
+				"peter",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/geneset/genesets_peter.R"
+			],
+			[
+				"pca",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/data_processing/ssgsea/pca.R"
+			],
+			[
+				"phen",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genentech.tpm/phenotype_val.txt"
+			],
+			[
+				"mult",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/test/simulation/generate_multiple_outputs.py"
+			],
+			[
+				"log",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/data/genentech.tpm/train.log"
+			],
+			[
+				"mul",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/test/simulation/generate_multiple_outputs.py"
+			],
+			[
+				"TRAIN",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/train.py"
+			],
+			[
+				"pam",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/results/simulation15Feb/params.json"
+			],
+			[
+				"ur",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			],
+			[
+				"net.py",
+				"~/Downloads/temp1.py"
+			],
+			[
+				"datast",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/results/simulation5jan/datasets_list.txt"
+			],
+			[
+				"util",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/utils.py"
+			],
+			[
+				"ruh",
+				"~/Dropbox (Partners HealthCare)/project/code/deeplearning/icb/deepImmune/run.sh"
+			]
+		],
+		"width": 0.0
+	},
+	"select_project":
+	{
+		"height": 500.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 380.0
+	},
+	"select_symbol":
+	{
+		"height": 345.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 536.0
+	},
+	"selected_group": 0,
+	"settings":
+	{
+	},
+	"show_minimap": false,
+	"show_open_files": true,
+	"show_tabs": true,
+	"side_bar_visible": false,
+	"side_bar_width": 82.0,
+	"status_bar_visible": true,
+	"template_settings":
+	{
+	}
+}

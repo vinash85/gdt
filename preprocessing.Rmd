@@ -1,0 +1,56 @@
+## Create a better cluster of lee data
+```{r}
+set.seed(1232)
+inx.curr = which(lee.sco$Treatment.Cycle == "C1D1" & lee.sco$response %in% c("PR", "PD", "CR") ) %>% sample(., size=10000)
+lee.sco.sub = lee.sco[,inx.curr %>% sort]
+lee.sco.sub %<>% preprocessing.harmony.seurat
+DimPlot(object = lee.sco.sub, reduction = "tsne", pt.size = .1) %>% 
+ggsave("results/.figs/lee.sco.sub.tsne.cluster.pdf", .)
+DimPlot(object = lee.sco.sub, reduction = "tsne", group.by="patient.name", pt.size = .1) %>% 
+ggsave("results/.figs/lee.sco.sub.tsne.patient.pdf", .)
+
+
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub, features = c("gdt.di", "gdt", "TRDC", "TRGC1", "TRGC2","CD3E" , "CD3D",  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH"), reduction="tsne") %>% 
+ggsave("results/.figs/lee.sco.sub.tsne.features.pdf", plot=., width=16, height=10)
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub, reduction = "tsne", features= sort(grep("^TR", colnames(lee.sco.sub@meta.data), value=T))) %>% 
+ggsave("results/.figs/lee.sco.sub.tsne.TRXs.pdf", plot=.,width=16, height=10)
+
+sort(grep("TRG[V,C]", rownames(lee.sco.sub), value=T))
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub, reduction = "tsne", features = sort(grep("TRG[V,C]", rownames(lee.sco.sub), value=T))) %>% 
+ggsave("results/.figs/lee.sco.sub.tsne.TRG_VC.pdf", plot=.,width=16, height=10)
+
+# lee.sco.sub %<>%  RunTSNE(reduction = "harmony", dims = seq(50)) 
+lee.sco.sub %<>%  RunTSNE(reduction = "pca", dims = seq(50), reduction.name='tsnegene') 
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub, features = c("gdt.di", "gdt", "TRDC", "TRGC1", "TRGC2","CD3E" , "CD3D",  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH"), reduction="tsnegene") %>% 
+ggsave("results/.figs/lee.sco.sub.tsnegene.features.pdf", plot=., width=16, height=10)
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub,  features= sort(grep("^TR", colnames(lee.sco.sub@meta.data), value=T)), reduction="tsnegene") %>% 
+ggsave("results/.figs/lee.sco.sub.tsnegene.TRXs.pdf", plot=.,width=16, height=10)
+
+FeaturePlot(pt.size = 0.5,lee.sco.sub,  features= sort(grep("TRG[V,C]", rownames(lee.sco.sub), value=T)), reduction="tsnegene") %>% 
+ggsave("results/.figs/lee.sco.sub.tsnegene.TRG_VC.pdf", plot=.,width=16, height=10)
+
+
+```
+
+## Preprocess pre-treatment data separately 
+```{r}
+library(Seurat)
+library(magrittr)
+library(SingleR)
+
+
+lee.sco = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.RDS")
+inx.curr = which(lee.sco$Treatment.Cycle == "C1D1" & lee.sco$response %in% c("PR", "PD", "CR"))
+lee.sco.cd3.pre = lee.sco[,inx.curr]
+lee.sco.cd3.pre  %<>%preprocessing.harmony.seurat 
+s.annot = get.SingleR.annotation(lee.sco.cd3.pre)
+saveRDS(file = "~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.singleRannotation.RDS", s.annot)
+saveRDS(file = "~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.pretreatment.harmony.RDS", lee.sco.cd3.pre)
+
+
+```

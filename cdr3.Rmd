@@ -1,0 +1,432 @@
+## Write input file for cdr3 prediction 
+## Generate input fasta file
+~/liulab_home/softwares/protein-sequence-embedding-iclr2019/data/Getz/getz.cdr3.fa
+
+copied from : data_processing/ssgsea/imputation/simple/tgd_tcga/tcga.Rmd
+and writing file copied from:
+data_processing/ssgsea/imputation/scRNA/epoch-142/tcr.embedding.Rmd
+
+```{r}
+library(stringr)
+seqdetpth = fread("/liulab/lsong/projects/TRUST4_TCGA/tcga_seqDepth.txt")
+trust4 = fread("/liulab/lsong/projects/TRUST4_TCGA/tcga_simpleRepNoPartial.out")
+process.label = function(tt){
+  substring(tt,1,16) %>% gsub("-", ., replacement = ".")
+}
+trust4[,name:=substring(V1, 1, 16)]
+filter.str = c("out_of_frame", "?")
+trust4 = trust4[!(V5 %in% filter.str)] 
+trust4[,myid:=paste0("V",seq(.N))]
+## for PFAM header 
+# >S0E8J4_GIBF5/356-387 S0E8J4.1 PF16503.4;zn-ribbon_14;
+trust4[,aa.len:=stringr::str_length(V5)]
+trust4[,fa.file:=paste(paste0(">",myid),  "/356-387 S0E8J4.1 PF16503.4;zn-ribbon_14;")]
+trust4= trust4[!is.na(aa.len) ]
+trust4.filtered = trust4[aa.len <= 25] %>% 
+.[!duplicated(V5)]
+
+trust4.filtered.trg = trust4.filtered[grepl("^TRG", V6)|grepl("^TRG", V7)| grepl("^TRG", V8)|grepl("^TRG", V9)] 
+trust4.filtered.trd = trust4.filtered[grepl("^TRD", V6)|grepl("^TRD", V7)| grepl("^TRD", V8)|grepl("^TRD", V9)] 
+trust4.filtered.trb = trust4.filtered[grepl("^TRB", V6)|grepl("^TRB", V7)| grepl("^TRB", V8)|grepl("^TRB", V9)] 
+trust4.filtered.tra = trust4.filtered[grepl("^TRA", V6)|grepl("^TRA", V7)| grepl("^TRA", V8)|grepl("^TRA", V9)] 
+
+trust4.trdg = rbind(trust4.filtered.trg, trust4.filtered.trd)
+## map cancer types 
+trust4.trdg[,bcr_patient_barcode:=substring(V1,1,12)]
+clin =fread("~/liulab_home/data/tcga/TCGA_gdc/clinical_PANCAN_patient_with_followup.tsv")
+trust4.trdg$cancer.type = clin[match(trust4.trdg$bcr_patient_barcode,bcr_patient_barcode)]$acronym 
+trust4.trdg.all = trust4[V5 %in% unique(trust4.trdg$V5)]
+trust4.trdg.all[,bcr_patient_barcode:=substring(V1,1,12)]
+trust4.trdg.all$cancer.type = clin[match(trust4.trdg.all$bcr_patient_barcode,bcr_patient_barcode)]$acronym 
+aa =table(trust4.trdg.all$cancer.type) 
+cancer.type.sel = which(aa > 300) %>% names 
+trust4.trdg.all[,cancer.type.sub:=ifelse(cancer.type %in% cancer.type.sel, cancer.type, "misc")]
+
+trust4.trdg.all[,cdr3.type:=ifelse(grepl("^TRG", V6)|grepl("^TRG", V7)| grepl("^TRG", V8)|grepl("^TRG", V9), "TRG", "TRD")] 
+
+trust4.trdg[,aa:=V5]
+trust4.trdg.all[,aa:=V5]
+```
+
+```{r}
+dir.create("/liulab/asahu/softwares/protein-sequence-embedding-iclr2019/data/tcga/")
+trust4.fa = c(t(trust4.trdg[,.(fa.file, V5)]))
+write.table(file = "/liulab/asahu/softwares/protein-sequence-embedding-iclr2019/data/tcga/for.gdt.cdr3.fa", x= trust4.fa, row.names = F, quote =F, col.names = F)
+write.table(file = "/liulab/asahu/softwares/protein-sequence-embedding-iclr2019/data/tcga/for.gdt.cdr3.100.fa", x= trust4.fa[1:100], row.names = F, quote =F, col.names = F)
+```
+
+```{bash}
+CUDA_VISIBLE_DEVICES=1  python  eval_pfam.py --models_dir /liulab/asahu/projects/icb/data/pretrained/pretrained_models/ -f  ~/liulab_home/softwares/protein-sequence-embedding-iclr2019/data/tcga/for.gdt.cdr3.fa -d -1
+```
+
+## Process the output with pfam encoder
+```{r}
+# source("data_processing/ssgsea/imputation/scRNA/epoch-142/source.proj.R")
+source("src/from.epoch-142.source.proj.R")
+
+color.clusters.features <- function(data, cluster,  color.cols = "condition",
+                                    title="t-SNE",size=0.15, do.discrete=T, filename=NULL, normalize=TRUE, shape = 1, remove.guide=T, do.facet=F, alpha=0.5){
+  require(viridis)
+  require(ggthemes)
+  dt1 = as.data.frame(cluster)
+  colnames(dt1) = c("V1", "V2")
+  ps = list()
+  if(!is.null(filename)) dir.create(filename)
+  for (color.col in color.cols) {
+    tryCatch({
+      color.col = gsub(color.col, pattern = "-", replacement = ".")
+      if(normalize) data[[color.col]] = znorm(data[[color.col]])
+      if(is.null(data$shape)) {
+        d_cluster_1=cbind(dt1,col=data[[color.col]], shape=shape)
+      }else{
+        d_cluster_1=cbind(dt1,col=data[[color.col]], shape=data$shape)
+      }
+      title.curr = color.col
+      if(title !="") title.curr = sprintf("%s_%s", title, color.col)
+
+      do.discrete = ifelse(is.factor(d_cluster_1$col), T, F)
+      p=ggplot(d_cluster_1, aes(x=V1, y=V2)) +
+        geom_point(size=size,aes(color=col, shape=as.factor(shape)), alpha=alpha) +
+        xlab("Dim1") + ylab("Dim2") +
+        ggtitle(label = title.curr) +
+        theme_classic() +
+        theme(axis.text.x=element_blank(),
+              axis.text.y=element_blank())
+
+      if (do.discrete) {
+        colorCount = length(unique(d_cluster_1$col))
+        if(colorCount > 8){
+          getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+          p =  p + scale_fill_manual(values = getPalette(colorCount))
+        }else{
+          p<- p+ scale_colour_brewer(palette = "Set2")
+        }
+      }else{
+        p <- p+ scale_color_gradientn(colours = heat.colors(20, alpha=alpha, rev=T))
+      }
+      if(do.facet) p = p + facet_wrap(~col)
+      if (remove.guide)  p<- p + theme(legend.position = "none")
+      if(!is.null(filename)) {
+        filename.curr = sprintf("%s_%s.pdf", filename, gsub(color.col, pattern="-", replacement = "_"))
+
+        ggsave(file=filename.curr, p)
+      }
+      ps[[color.col]]  = p
+    },
+    error = function(e) ps[[color.col]]  = NA
+    )
+
+  }
+  ps
+}
+
+
+plotUMAP <- function(data, umap.model = NULL, col = NULL, color.col = NULL,
+                     title="UMAP",size=0.25, do.discrete=T, filename=NULL, n_neighbors =  15, learning_rate = 1, init = "spectral", min_dist = .01, pca = NULL,  n_threads=32, ...){
+  require(uwot)
+  require(ggthemes)
+  require(ggplot2)
+  if(is.null(umap.model)){
+    set.seed(9)
+    if(is.data.table(data)) data = as.data.frame(data)
+    if(!is.null(col)) {
+      umap.mat = as.matrix(data[,col])
+    }else{
+      umap.mat = as.matrix(data)
+    }
+    umap.model <- umap(umap.mat,
+                       pca = pca, n_neighbors =  n_neighbors, learning_rate = learning_rate, init = init, min_dist = min_dist, n_threads = n_threads, ret_model=T, ...)
+  }
+
+  d_umap_1 = as.data.frame(umap.model$embedding)
+  d_umap_1$col = as.factor(0)
+  if(!is.null(color.col)) {
+    if(length(color.col) == nrow(data)){
+      d_umap_1$col=color.col
+    }else{
+      d_umap_1$col=data[[color.col]]
+    }
+
+    # if(is.character(color.col)){
+    #   d_umap_1$col=data[[color.col]]
+    # }else if(length(color.col) == nrow(data)){
+    #   d_umap_1$col=color.col
+    # }
+  }
+
+  do.discrete = ifelse(is.factor(d_umap_1$col), T, F)
+  ## plotting the results without clustering
+  p=ggplot(d_umap_1, aes(x=V1, y=V2)) +
+    geom_point(size=size,aes(color=col), alpha=0.8) +
+    guides(colour=guide_legend(override.aes=list(size=2))) +
+    xlab("umap_1") + ylab("umap_2") +
+    ggtitle(label = title) +
+    theme_classic() +
+    theme(axis.text.x=element_blank(),
+          axis.text.y=element_blank())
+  if (do.discrete) {
+    p<- p+ scale_colour_brewer(palette = "Set2")
+  }else{
+    p <- p+ scale_color_gradient2_tableau(palette = "Orange-Blue Diverging")
+    # p <- p+ scale_color_gradient2_tableau(palette = "Orange-Blue Diverging", limits=c(-.3, .3))
+  }
+
+  ##theme(legend.position = "none")
+  if(!is.null(filename)) ggsave(file=filename, p)
+  list(umap.model, p)
+}
+
+plot.sequence.and.clustering <- function(data.clust, text, color.col = NULL, num.plot.seq =100, text.size =2) {
+  require(viridis)
+  require(ggthemes)
+  require(ggrepel)
+  # data.tcr.clust = data.table(umap.all.p[[1]]$embedding)
+
+  d_umap_1 = cbind(data.clust, text = text)
+  if(is.null(color.col)) {
+    d_umap_1$col = as.factor(0)
+  }else{
+    d_umap_1$col=color.col
+  }
+  do.discrete = ifelse(is.factor(d_umap_1$col), T, F)
+  num.plot.seq = min(num.plot.seq, nrow(d_umap_1))
+
+  p=ggplot(d_umap_1, aes(x=V1, y=V2)) +
+    geom_point(aes(color=col), alpha=0.8) +
+    guides(colour=guide_legend(override.aes=list(size=2))) +
+    xlab("umap_1") + ylab("umap_2") +
+    # ggtitle(label = title) +
+    theme_classic() +
+    theme(axis.text.x=element_blank(),
+          axis.text.y=element_blank())
+
+  if (do.discrete) {
+    p<- p+ scale_colour_brewer(palette = "Set2")
+  }else{
+    p <- p+ scale_color_tableau()
+  }
+
+  p = p + geom_text_repel(
+    # data.tcr = d_umap_1[sample(nrow(d_umap_1), size=100)],
+    data = d_umap_1[sample(nrow(d_umap_1), size=num.plot.seq)],
+    aes(x=V1, y=V2, label = text),
+    size = text.size,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) +
+    theme(legend.position = "none")
+  p
+}
+plot.tcr.embedding <- function(trust.curr, trust4.dt, trust4.dt.all, save.dir, title, mode="last", plot.seurat.marker=T) {
+    dir.create(save.dir, recursive=T)
+    
+    # require(avinash)
+    library(RColorBrewer)
+    # trust.curr = subset.lm.embedding(trust.curr, trust4.dt, subset= trust4.dt.all$currid)
+    trust.curr.curr.unique = aggregate.embedding(trust.curr, trust4.dt,  mode=mode)
+    trust.curr.curr = trust.curr.curr.unique[match(trust4.dt.all$aa, trust4.dt$aa),]
+    n_neighbors =15; learning_rate =1; min_dist = .01; pca = 50
+    umap.all.p = plotUMAP(data = trust.curr.curr,  
+                          col=NULL, color.col=as.factor(trust4.dt.all$cdr3.type), size=1, do.discrete=T, 
+                          n_neighbors = n_neighbors, learning_rate = learning_rate, min_dist = min_dist, pca=pca,
+                          title= title,
+                          filename=NULL , n_epochs = 100, metric = "euclidean")
+    
+    data.umap = data.table(umap.all.p[[1]]$embedding)
+    
+    p1 = plot.sequence.and.clustering(data.clust=data.umap, text = trust4.dt.all$aa, color.col = as.factor(trust4.dt.all$cdr3.type), num.plot.seq =100, text.size =2) 
+    ggsave(filename = sprintf("%s/cdr3_seq.pdf",save.dir), p1, width = 16, height = 16)
+    xx1 = color.clusters.features( data=as.data.frame(trust4.dt.all), cluster=data.umap,  color.cols =c("cancer.type.sub", "v.allele", "d.allele", "j.allele", "c.allele"),
+                                   title="type",size=2, filename= sprintf("%s/",save.dir), normalize=F, do.discrete=T, do.facet=T)
+
+    list(umap.all.p = umap.all.p, xx1=xx1)
+}
+
+```
+```{r}
+filter.trs = function(xx) {
+	xx[xx=="*"] = NA
+	yy = table(xx) 
+	aa = table(xx) 
+	type.sel = which(aa > 300) %>% names 
+	ifelse(xx %in% type.sel, xx, "misc") %>% 
+	as.factor
+}
+trust4.trdg.all[,v.allele:=filter.trs(V6)] %>%
+.[,d.allele:=filter.trs(V7)] %>%
+.[,j.allele:=filter.trs(V8)] %>%
+.[,c.allele:=filter.trs(V9)] 
+
+trust4.trdg.all[,cancer.type.sub:=filter.trs(cancer.type)]
+
+library(dplyr)
+options(warn=-1)
+modes = c("last", "mean", "middle", "SIF")
+modes = c("SIF")
+library(reticulate)
+np <- import("numpy")
+trust.files = list.files("/liulab/asahu/softwares/protein-sequence-embedding-iclr2019/data/tcga/", pattern = "for.gdt.cdr3.*.sav.fvec.npy", full.names = T)
+trust.files %<>% setdiff(., grep(pattern="for.gdt.cdr3.100",.,value=T))
+for (file1 in trust.files) {
+    print(paste("processing", file1))
+    trust4.pfam <- np$load(file1)
+    
+    for (mode in modes) {
+        dir.name = gsub(".sav.fvec.npy", gsub("getz.cdr3.fa", basename(file1), replacement = ""), replacement = "")
+        curr.dir = dirname(file1)
+        
+        dir.curr = sprintf("%s/outputs/%s/%s/", curr.dir, dir.name, mode)
+        dir.create(dir.curr, recursive = T)
+        # out = plot.tcr.embedding(trust.curr=trust4.pfam, save.dir=dir.curr, title="pfam", mode=mode)
+        out1 = plot.tcr.embedding(trust.curr=trust4.pfam, trust4.dt=trust4.trdg, trust4.dt.all=trust4.trdg.all, save.dir=sprintf("%s/",dir.curr), title="pfam", mode=mode )
+    }
+}
+options(warn=0)
+```
+
+## Determine cancer specific usuage of allele gdt receptors
+
+```{r}
+
+allele.agg = function(trg.mat, index=5) {
+	alleles = colnames(trg.mat)
+	alleles.uniq = alleles %>% substring(1,index) %>% unique
+	out = lapply(alleles.uniq, function(aa){
+		inx=grep(aa, alleles)
+		out = trg.mat[, inx] 
+		if(length(inx) > 1)  
+			out %<>% rowSums(na.rm=T)
+		out
+	}) %>% do.call(cbind,.) %>% 
+	set_colnames(alleles.uniq)
+
+}
+trust4.trgd = rbind(
+ trust4[grepl("^TRG", V6)|grepl("^TRG", V7)| grepl("^TRG", V8)|grepl("^TRG", V9)], 
+trust4[grepl("^TRD", V6)|grepl("^TRD", V7)| grepl("^TRD", V8)|grepl("^TRD", V9)] ) 
+trust4.trgd$seqdtpth = seqdetpth[match(trust4.trgd$V1, V1)]$V2
+trust4.trgd[,norm.trg:=V2*1E7/seqdtpth]
+
+trust4.trgd[,bcr_patient_barcode:=substring(V1,1,12)]
+trust4.trgd$cancertype = clin[match(trust4.trgd$bcr_patient_barcode, bcr_patient_barcode)]$acronym 
+
+
+
+for (ii in paste0("V",6:9)) {
+trust4.trgd$current.allele = substring(trust4.trgd[[ii]], 1, 5)
+trust4.trgd$cancertype = as.factor(trust4.trgd$cancertype)
+xx = table(trust4.trgd$current.allele) 
+yy = which(xx > 200) %>% names
+temp = trust4.trgd[current.allele!="*"][current.allele %in% yy]
+
+p = ggplot(temp, aes(x=cancertype, y=norm.trg, fill=cancertype)) + 
+geom_boxplot(outlier.shape = NA) +
+  # geom_point(pch = 21, fill = "grey",
+  #            position = position_jitter(width = 0.5, height = 0), size=0.5, alpha=0.5) +
+ylim(c(0,.5)) +
+   theme(axis.text.x = element_blank()) + 
+  facet_wrap(~current.allele, scale="free") + 
+             theme_bw() 
+ggsave(filename=sprintf("results/.figs/tcga.gdt.allele.cancertype.%s.pdf", ii), p, width=16, height=10)   
+}
+
+normalize = function(mat){
+	mat1 = mat[,grep("TRD", colnames(mat)), drop=F]
+	if(ncol(mat1) > 1) mat1 = mat1/rowMeans(mat1)
+		mat2 = mat[,grep("TRG", colnames(mat)), drop=F]
+	if(ncol(mat2) > 1) mat2 = mat2/rowMeans(mat2)
+		mat = cbind(mat1, mat2)
+	mat[is.nan(mat)] = 0
+	mat 
+}
+
+for (ii in paste0("V",6:9)) {
+	trg.mat = dcast(trust4.trgd[V6!="*"], as.formula(paste("V1 ~", ii)), value.var="norm.trg", fun.aggregate=sum)
+	trg.agg = trg.mat[,seq(2, ncol(trg.mat))] %>% allele.agg(index=5) %>% 
+	set_rownames(trg.mat$V1)
+# adding those with all zeros
+	zero.samp = setdiff(seqdetpth$V1, trg.agg %>% rownames)
+	trg.agg.zero = matrix(0, nrow=length(zero.samp), ncol= ncol(trg.agg)) %>%
+	set_rownames(zero.samp) %>%
+	rbind(trg.agg,.)
+	trg.agg.melt = melt(trg.agg.zero) %>% data.table
+	trg.agg.melt$Var1 %<>% substring(1,12)
+	trg.agg.melt$cancertype = clin[match(trg.agg.melt$Var1, bcr_patient_barcode)]$acronym %>% 
+	as.factor 
+	# tr.alleles = substring(trg.agg.melt$Var2,1,5) %>% unique 
+	trg.agg.melt$current.allele = substring(trg.agg.melt$Var2, 1, 5)
+	xx = table(trg.agg.melt$current.allele) 
+	yy = which(xx > 200) %>% names
+	temp = trg.agg.melt[current.allele!="*"][current.allele %in% yy]
+	
+	temp1 =temp[grep("^TRD", Var2)]
+	curr.tr = temp1[1]$Var2 %>% substring(1,4)
+	p = ggplot(temp1, aes(x=cancertype, y=value, fill=cancertype)) + 
+	geom_boxplot(outlier.shape = NA) +
+	ylab("normalized TR level") +
+	# ylim(c(0,.5)) +
+	theme(axis.text.x = element_blank()) + 
+	facet_wrap(~current.allele, scale="free") + 
+	theme_bw() 
+	ggsave(filename=sprintf("results/.figs/trust4/tcga.cancertype.%s.pdf", curr.tr), p, width=16, height=10)   
+		try({   
+	temp1 =temp[grep("^TRG", Var2)]
+	curr.tr = temp1[1]$Var2 %>% substring(1,4)
+	p = ggplot(temp1, aes(x=cancertype, y=value, fill=cancertype)) + 
+	geom_boxplot(outlier.shape = NA) +
+	ylab("normalized TR level") +
+	# ylim(c(0,.5)) +
+	theme(axis.text.x = element_blank()) + 
+	facet_wrap(~current.allele, scale="free") + 
+	theme_bw() 
+	ggsave(filename=sprintf("results/.figs/trust4/tcga.cancertype.%s.pdf", curr.tr), p, width=16, height=10)
+})
+
+
+	trg.agg.zero.norm =  normalize(trg.agg.zero)
+	trg.agg.melt = melt(trg.agg.zero.norm) %>% data.table
+	trg.agg.melt$Var1 %<>% substring(1,12)
+	trg.agg.melt$cancertype = clin[match(trg.agg.melt$Var1, bcr_patient_barcode)]$acronym %>% 
+	as.factor 
+	# tr.alleles = substring(trg.agg.melt$Var2,1,5) %>% unique 
+	trg.agg.melt$current.allele = substring(trg.agg.melt$Var2, 1, 5)
+	xx = table(trg.agg.melt$current.allele) 
+	yy = which(xx > 200) %>% names
+	temp = trg.agg.melt[current.allele!="*"][current.allele %in% yy]
+	
+	temp1 =temp[grep("^TRD", Var2)]
+	curr.tr = temp1[1]$Var2 %>% substring(1,4)
+	p = ggplot(temp1, aes(x=cancertype, y=value, fill=cancertype)) + 
+	geom_boxplot(outlier.shape = NA) +
+	ylab("normalized TR level") + 
+	# ylim(c(0,.5)) +
+	theme(axis.text.x = element_blank()) + 
+	facet_wrap(~current.allele, scale="free") + 
+	theme_bw() 
+	ggsave(filename=sprintf("results/.figs/trust4/tcga.cancertype.%s.percent.pdf", curr.tr), p, width=16, height=10)
+	try({   
+	temp1 =temp[grep("^TRG", Var2)]
+	curr.tr = temp1[1]$Var2 %>% substring(1,4)
+	p = ggplot(temp1, aes(x=cancertype, y=value, fill=cancertype)) + 
+	geom_boxplot(outlier.shape = NA) +
+	ylab("normalized TR level") +
+	# ylim(c(0,.5)) +
+	theme(axis.text.x = element_blank()) + 
+	facet_wrap(~current.allele, scale="free") + 
+	theme_bw() 
+	ggsave(filename=sprintf("results/.figs/trust4/tcga.cancertype.%s.percent.pdf", curr.tr), p, width=16, height=10)   
+})
+
+}
+
+## Plot simple expression 
+tcga.biolinks = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
+library(SummarizedExperiment)
+tcga.mat = assay(tcga.biolinks) %>%
+set_rownames(rowData(tcga.biolinks)$external_gene_name) %>% t %>% 
+ scale(., scale=T, center=T) %>% t 
+
+ grep("^TR[GD][VDJC]",rownames(tcga.mat), value=T 
+
+```
+

@@ -1,0 +1,178 @@
+## Read PBMC data
+
+# read SingleR data
+# Calculate correlation 
+# Calculate exterme 
+
+```{r}
+library(extRemes)
+library(magrittr)
+library(SingleR)
+ref.se = SingleR::HumanPrimaryCellAtlasData()
+col.dat = colData(ref.se)
+ref.exp = assay(ref.se) %>%
+t() %>% scale(., center=T, scale=T) %>% t()
+rownames(ref.exp) = toupper(rownames(ref.exp))
+gdt.exp = ref.exp[, which(ref.se@colData$label.fine=="T_cell:gamma-delta")]
+
+gdt.exp[rownames(gdt.exp) %>% grep("^TR[ABDG][VDJC]", ., value=T),] 
+gdt.exp[which(gdt.exp[,1] > 5),]
+```
+
+
+## Calculate correlation 
+
+```{r}
+myFastCor.multicores = function(x,y, method="spearman", num=20000, nthreads=1){
+	require(parallel)
+    if(is.null(num))  num=20000
+    if(nthreads>1){
+         num=num*32
+        out = mclapply(seq(ncol(y)), function(tt) myFastCor(x=x,y=y[,tt,drop=F], method=method, num=num), mc.cores = nthreads) %>%
+            do.call(cbind,.)
+    }else{
+        out = myFastCor(x=x,y=y, method=method, num=num)
+    }
+    out
+}
+
+myFastCor <- function(x,y, method="spearman", num=20000) {
+    if (ncol(x) < num | ncol(y) < num){
+        out = cor(x, y, method="spearman", use="pairwise.complete.obs")
+    }else{
+        if(method=="spearman"){
+            x%<>%
+                apply(.,2, rank, na.last="keep")
+            y%<>%
+                apply(.,2, rank, na.last="keep")
+        }
+        out = WGCNA::cor(x, y, use="pairwise.complete.obs")
+    }
+    out
+}
+calcCorEnrich <- function(x,y, nthreads=1, num = 20000) {
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+    common = intersect(rownames(x), rownames(y))
+    if(length(common) < 10)
+    	stop("number of genes less than 10")
+    myFastCor.multicores(x[common,], y[common,], num=num, nthreads=nthreads)
+}
+pbmc.scaled.data = pbmc.combined@assays$RNA@data[rowSums(pbmc.combined@assays$RNA@data) >0, ] %>%
+t() %>% scale(., center=T, scale=T) %>% t()
+
+
+pbmc.hpa.cor = calcCorEnrich(pbmc.scaled.data, ref.exp, nthreads=1, num=50)
+
+```
+
+## extreme test 
+
+```{r}
+
+scale.fn <- . %>% .[rowSums(.) >0, ] %>%
+t() %>% scale(., center=T, scale=T) %>% t()
+
+pbmc.combined.sub = pbmc.combined[,pbmc.combined$seurat_clusters %in% c(12, 23, 11, 32)] 
+pbmc.combined.sub$is.tgd = ifelse(pbmc.combined.sub$seurat_clusters ==12, 1, 0)
+pbmc.scaled.data.sub = pbmc.combined.sub@assays$RNA@data %>% scale.fn
+
+sel1 = which(ref.se@colData$label.main %in% "NK_cell") 
+sel2 = which(ref.se@colData$label.fine %in% "T_cell:gamma-delta") 
+ref.curr =  assay(ref.se)[, c(sel1, sel2)] %>% 
+scale.fn %>% 
+set_colnames(c(rep("NK", 5), rep("gdT", 2)))
+genes.sel = intersect(rownames(pbmc.scaled.data.sub), rownames(ref.curr))
+pbmc.scaled.data.sub = pbmc.scaled.data.sub[genes.sel,]
+ref.curr= ref.curr[genes.sel,]
+taildep.out = apply(pbmc.scaled.data.sub, 2, function(query) {
+	apply(ref.curr, 2, function(ref) {
+		taildep(query, ref, 0.95)
+	}) 
+}) 
+
+taildep.chi = taildep.out[seq(1, 14, 2), ] %>% t %>%
+set_colnames(c(paste0("NK", 1:5), paste0("gdT", 1:2)))
+
+taildep.chibar = taildep.out[seq(2, 14, 2), ] %>% t %>%
+set_colnames(c(paste0("NK", 1:5), paste0("gdT", 1:2)))
+
+for (ii in colnames(taildep.chibar)) 
+	pbmc.combined.sub[[ii]] = taildep.chibar[,ii]
+
+VlnPlot(pbmc.combined.sub , features = colnames(taildep.chibar), group.by ="seurat_clusters") %>% 
+ggsave("results/.figs/pbmc.combined.sub.chibar.pdf", plot=., width=16, height=10)
+
+pbmc.combined.sub %<>%  FindVariableFeatures(selection.method = "vst", nfeatures = 2000)%>% 
+    ScaleData(verbose = FALSE) 
+pbmc.sub.hpa.cor = calcCorEnrich(pbmc.combined.sub@assays$RNA@scale.data, ref.curr, nthreads=1, num=50)
+pbmc.sub.hpa.cor %<>% set_colnames()
+
+colnames(pbmc.sub.hpa.cor) = paste("cor", colnames(ref.curr), 1:7, sep="_")
+
+for (ii in colnames(pbmc.sub.hpa.cor)) 
+    pbmc.combined.sub[[ii]] = pbmc.sub.hpa.cor[,ii]
+
+VlnPlot(pbmc.combined.sub , features = colnames(pbmc.sub.hpa.cor), group.by ="seurat_clusters") %>% 
+ggsave("results/.figs/pbmc.combined.sub.cor.pdf", plot=., width=16, height=10)
+
+```
+
+
+```{r}
+
+
+matrix.tail.depenence <- 
+function (x, y, u, type = c("all", "chi", "chibar"), na.rm = FALSE)
+{
+    type <- match.arg(type)
+    n <- nrow(x)
+    if (n != nrow(y))
+        stop("taildep: y must have same length as x.")
+    find.thrs <- . %>% quantile(., probs=n*u)
+ 
+    xun <- apply(x, 1, find) sort(x)[floor(n * u)]
+    yun <- sort(y)[floor(n * u)]
+    id <- (x > xun) & (y > yun)
+    if (type == "all" || type == "chi")
+        chi <- sum(id, na.rm = TRUE)/(n * (1 - u))
+    if (type == "all" || type == "chibar")
+        chibar <- 2 * log(1 - u)/log(mean(id)) - 1
+    if (type == "all") {
+        res <- c(chi, chibar)
+        names(res) <- c("chi", "chibar")
+    }
+    else if (type == "chi") {
+        res <- chi
+        names(res) <- "chi"
+    }
+    else {
+        res <- chibar
+        names(res) <- "chibar"
+    }
+    return(res)
+}
+
+get.tail.dependence <- function(x,y) {
+    if (ncol(x) < num | ncol(y) < num){
+        out = cor(x, y, method="spearman", use="pairwise.complete.obs")
+    }else{
+        if(method=="spearman"){
+            x%<>%
+                apply(.,2, rank, na.last="keep")
+            y%<>%
+                apply(.,2, rank, na.last="keep")
+        }
+        out = WGCNA::cor(x, y, use="pairwise.complete.obs")
+    }
+    out
+}
+calcCorEnrich.extreme <- function(x,y, nthreads=1, num = 20000) {
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+    common = intersect(rownames(x), rownames(y))
+    if(length(common) < 10)
+    	stop("number of genes less than 10")
+    myFastCor.multicores(x[common,], y[common,], num=num, nthreads=nthreads)
+}
+```

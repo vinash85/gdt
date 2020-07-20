@@ -1,0 +1,918 @@
+```{r}
+setwd("~/project/gdt")
+gs.enrichment.score = function(exp.count, genes.set){
+	colSums(exp.count[rownames(exp.count) %in% genes.set, ])/colSums(exp.count)
+}
+norm.gs.enrichment.score = function(gs.score){
+	(gs.score - min(gs.score))/(max(gs.score) - min(gs.score))
+}
+
+gdT.gs1 = c("CD3D", "CD3E", "TRDC", "TRGC1", "TRGC2")
+gdT.gs2= c("CD8A", "CD8B")
+
+trg.genes = grep("^TRG[V,D,J, C]", rownames(pbmc.combined), value=T)
+trd.genes = grep("^TRD[V,D,J,C]", rownames(pbmc.combined), value=T)
+get.gdT.score  = function(sco) {
+	gdT.gs1 = c("CD3D", "CD3E", "TRDC", "TRGC1", "TRGC2")
+	gdT.gs2= c("CD8A", "CD8B")
+	sco$gdt.gs1  = gs.enrichment.score(sco@assays$RNA@counts, gdT.gs1) 
+
+	sco$gdt.gs2 = (-1 * gs.enrichment.score(sco@assays$RNA@counts, gdT.gs2))
+
+	sco$gdt = norm.gs.enrichment.score(sco$gdt.gs1) * norm.gs.enrichment.score(sco$gdt.gs2)
+	sco
+}
+
+
+library(Seurat)
+library(data.table)
+library(magrittr)
+library(Matrix)
+exp.mat  = fread("~/liulab_home/data/single_cell/GSE128223/data/GSE128223_3donors_d1_d2_v2.tsv.gz")
+row.name = exp.mat$V1
+exp.mat = exp.mat[,V1:=NULL] %>%  as.matrix %>%
+set_rownames(row.name)
+gdt.pnas <- CreateSeuratObject(counts = exp.mat, project = "PNAS")
+gdt.pnas %<>% preprocessing.std.seurat
+
+norm.exp = exp(gdt.pnas@assays$RNA@data) -1 
+gs1.score = gs.enrichment.score(norm.exp, gdT.gs1) %>%
+norm.gs.enrichment.score
+
+gs2.score = (-1 * gs.enrichment.score(norm.exp, gdT.gs2)) %>%
+norm.gs.enrichment.score
+```
+
+
+## pbmc datasets analysis
+
+```{r}
+library(Matrix)
+library(Seurat)
+library(data.table)
+library(magrittr)
+library(cowplot)
+library(harmony)
+library(uwot)
+library(parallel)
+library(ggplot2)
+
+pbmc4k.data <- Read10X(data.dir = "/homes/cwang/projects/DATA/SCRNAseq/Data_normal/10XHCA_PBMC/Data/pbmc4k/outs/filtered_gene_bc_matrices/GRCh38/")
+pbmc4k <- CreateSeuratObject(counts = pbmc4k.data, project = "PBMC4K")
+
+
+pbmc8k.data <- Read10X(data.dir = "/homes/cwang/projects/DATA/SCRNAseq/Data_normal/10XHCA_PBMC/Data/pbmc8k/outs/filtered_gene_bc_matrices/GRCh38/")
+pbmc8k <- CreateSeuratObject(counts = pbmc8k.data, project = "PBMC8K")
+
+
+
+
+pbmc.combined <- merge(pbmc4k, y = pbmc8k, add.cell.ids = c("4K", "8K"), project = "PBMC12K")
+
+pbmc.combined$gdt.gs1  = gs.enrichment.score(exp(pbmc.combined@assays$RNA@data) -1, gdT.gs1) 
+
+pbmc.combined$gdt.gs2 = (-1 * gs.enrichment.score(exp(pbmc.combined@assays$RNA@data)-1, gdT.gs2))
+
+pbmc.combined$gdt = norm.gs.enrichment.score(pbmc.combined$gdt.gs1) * norm.gs.enrichment.score(pbmc.combined$gdt.gs2)
+
+avg.exp <- function(sco, pattern){
+ tryCatch({
+aa = exp(sco@assays$RNA@data[grep(pattern, rownames(sco)),, drop=F]) - 1  
+ if(ncol(aa) >1) aa= colSums(aa)
+ 	aa
+}, error = function(e) NULL) 
+} 
+for (gd in c("TRG", "TRD", "TRA", "TRB")){
+	for (type in c("V", "D", "J", "C")){
+		label = paste0(gd,type)
+		out = avg.exp(pbmc.combined, label)
+		if(!is.null(out))
+			pbmc.combined %<>% AddMetaData(metadata=out,
+				col.name =label)
+	}
+}
+
+pbmc.combined  %<>%
+    Seurat::NormalizeData(verbose = FALSE) %>%
+    FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
+    ScaleData(verbose = FALSE) %>% 
+    RunPCA(pc.genes = pbmc@var.genes, npcs = 20, verbose = FALSE)%>%
+    RunUMAP(reduction = "pca", dims = 1:20) %>% 
+    FindNeighbors(reduction = "pca", dims = 1:20) %>% 
+    FindClusters(resolution = 0.5) %>% 
+    identity()
+
+pbmc.combined  %<>%  RunTSNE(reduction = "pca", dims = 1:20)
+
+
+   pbmc.combined  %<>%  FindNeighbors(reduction = "tsne",  dims = 1:2) %>% 
+    FindClusters(resolution = 0.5) %>% 
+    identity()
+saveRDS(file="~/liulab_home/data/single_cell/pbmc.12k.RDS", pbmc.combined)
+```
+
+##Ploting 
+```{r}
+FeaturePlot(pbmc.combined, reduction = "tsne", features= c("gdt", "gdt.gs1", "gdt.gs2")) %>% 
+ggsave("results/.figs/pbmc.combined.tsne.gdT.gs.score.pdf", plot=.)
+
+FeaturePlot(pbmc.combined, reduction = "tsne", features= grep("^TR", colnames(pbmc.combined@meta.data), value=T)) %>% 
+ggsave("results/.figs/pbmc.combined.tsne.TRXs.pdf", plot=.,width=16, height=10)
+
+FeaturePlot(pbmc.combined, features = c("gdt", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
+ggsave("results/.figs/pbmc.combined.umap.features.pdf", plot=., width=16, height=10)
+
+FeaturePlot(pbmc.combined, reduction = "tsne", features= "gdt") %>% 
+ggsave("results/.figs/pbmc.combined.tsne.gdT.gs.score.pdf", plot=.)
+
+FeaturePlot(pbmc.combined, reduction = "tsne",features = c("gdt", "TRDC", "TRGC1", "TRGC2","CD3E" , "CD8B", "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
+ggsave("results/.figs/pbmc.combined.tsne.features.pdf", plot=., width=16, height=10)
+ 
+ p =DimPlot(object = pbmc.combined, reduction = "tsne", label = TRUE, pt.size = 0.5) + NoLegend() 
+ ggsave("results/.figs/pbmc.combined.tsne.cluster.pdf", plot=p)
+
+pbmc.combined$marked.cluster = ifelse(pbmc.combined$seurat_clusters %in% c(12,23,11, 32, 19 , 13, 7), pbmc.combined$seurat_clusters, 0)
+ p = ggplot(pbmc.combined@meta.data, aes(gdt.gs1, gdt.gs2)) + geom_point() + facet_wrap(~marked.cluster)
+  ggsave("results/.figs/pbmc.combined.gs12.pdf", plot=p)
+
+
+```
+
+## combine with gamma delta from the dataset
+```{r}
+
+
+pbmc.tgd.combined <- merge(pbmc.combined[rownames(pbmc.combined) %in% rownames(gdt.pnas),], y = gdt.pnas, add.cell.ids = c("12k", "pnas"), project = "PBMCTGD")
+
+pbmc.tgd.combined$gdt.gs1  = gs.enrichment.score(pbmc.tgd.combined@assays$RNA@counts, gdT.gs1) 
+
+pbmc.tgd.combined$gdt.gs2 = (-1 * gs.enrichment.score(pbmc.tgd.combined@assays$RNA@counts, gdT.gs2))
+
+pbmc.tgd.combined$gdt = norm.gs.enrichment.score(pbmc.tgd.combined$gdt.gs1) * norm.gs.enrichment.score(pbmc.tgd.combined$gdt.gs2)
+
+
+pbmc.tgd.combined  %<>%
+    Seurat::NormalizeData(verbose = FALSE) %>%
+    FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
+    ScaleData(verbose = FALSE) %>% 
+    RunPCA(pc.genes = pbmc@var.genes, npcs = 20, verbose = FALSE)%>%
+    RunUMAP(reduction = "pca", dims = 1:20) %>% 
+    FindNeighbors(reduction = "pca", dims = 1:20) %>% 
+    FindClusters(resolution = 0.5) %>% 
+    identity()
+
+FeaturePlot(pbmc.tgd.combined, reduction = "umap", features= "gdt") %>% 
+ggsave("results/.figs/pbmc.tgd.combined.umap.gdT.gs.score.pdf", plot=.)
+
+FeaturePlot(pbmc.tgd.combined, features = c("gdt", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
+ggsave("results/.figs/pbmc.tgd.combined.umap.features.pdf", plot=., width=16, height=10)
+
+
+```
+
+## Shipp's data 
+```{r}
+lee.sco = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.RDS")
+lee.sco %<>% get.gdT.score
+FeaturePlot(lee.sco, reduction = "umap", features= "gdt") %>% 
+ggsave("results/.figs/lee.sco.umap.gdT.gs.score.pdf", plot=.)
+
+FeaturePlot(lee.sco, features = c("gdt", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
+ggsave("results/.figs/lee.sco.umap.features.pdf", plot=., width=16, height=10)
+
+```
+
+##GSE145281 
+
+```{r}
+GSE145281 = readRDS(file="~/liulab_home/data/single_cell/GSE145281/seurat.RDS") 
+```
+
+
+
+## creating supervised predictor  
+
+```{r}
+pbmc.combined.sel = pbmc.combined[,pbmc.combined$seurat_clusters %in% c(12, 23, 11, 32, 19 , 13, 7, 24, 2, 15)]
+pbmc.combined.sel$is.tgd = ifelse(pbmc.combined.sel$seurat_clusters %in% c(12,23), 1, 0)
+pbmc.combined.sel %>% FindVariableFeatures(method="vst")
+genes.sel = intersect(VariableFeatures(pbmc.combined.sel), VariableFeatures(lee.sco)) %>%
+intersect(., rownames(GSE145281))
+dataset = pbmc.combined.sel@assays$RNA@data[genes.sel,] %>% t %>%
+as.data.table %>% 
+.[,type:="PBMC"] %>%
+.[,is.tgd:=pbmc.combined.sel$is.tgd] %>%
+.[,c("type", genes.sel, "is.tgd"), with=F]
+ source("~/liulab_home/softwares/avinash/R/source.deepImmune.R")
+
+output.dir = "/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk"
+write.dataset(output.dir =output.dir, dataset = dataset, sample.name = colnames(pbmc.combined.sel))
+
+file.copy("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt_t_nk/params.json", output.dir)
+file.copy("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt_t_nk/datasets_tsne_list.txt", output.dir)
+file.copy("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt_t_nk/datasets_test_list.txt", output.dir)
+
+# verify gene.sel is correct in rerun
+genes.sel.previous = fread("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/dataset.txt", nrow=1) %>% 
+colnames
+genes.sel.previous = genes.sel.previous[-c(1, length(genes.sel.previous))]
+identical(genes.sel.previous,genes.sel)
+``` 
+
+## Train 
+```{bash}
+## Shell script 
+python train.py  --data_dir  ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/datasets_tsne_list.txt --model_dir ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/. 
+## 
+```
+## Write test data
+```{r}
+output.dir1 = "/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/GSE145281"
+dataset = GSE145281@assays$RNA@data[genes.sel,] %>% t %>%
+as.data.table %>% 
+.[,type:="PBMC"] %>%
+.[,is.tgd:=0] %>%
+.[,c("type", genes.sel, "is.tgd"), with=F]
+write.dataset(output.dir = output.dir1, dataset = dataset, sample.name = colnames(GSE145281), training=F)
+
+output.dir1 = "/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/lee.sco"
+dataset = lee.sco@assays$RNA@data[genes.sel,] %>% t %>%
+as.data.table %>% 
+.[,type:="PBMC"] %>%
+.[,is.tgd:=0] %>%
+.[,c("type", genes.sel, "is.tgd"), with=F]
+write.dataset(output.dir = output.dir1, dataset = dataset, sample.name = colnames(lee.sco), training=F)
+
+```{r}
+
+
+## Test 
+```{bash}
+python evaluate.py  --data_dir  ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/datasets_test_list.txt --model_dir ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/tensorboardLog/20200606-173423/. --restore_file  ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/tensorboardLog/20200606-173423/epoch-34.pth.tar --output_dir  ~/project/deeplearning/icb/data/gdt/pbmc.gdt2_t_nk/tensorboardLog/20200606-173423/outputs/
+
+```
+
+
+## read deepimmune output 
+```{r}
+gdt.out = fread("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/tensorboardLog/20200606-173423/outputs/val_1_prediction.csv")
+# samp.names = fread("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/GSE145281/samples_name.txt")
+
+GSE145281 %<>%  RunTSNE(reduction = "harmony", dims = 1:20)
+GSE145281$gdt.di = gdt.out$is.tgd.output
+
+
+FeaturePlot(GSE145281, features = c("gdt.di", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH"), reduction="tsne") %>% 
+ggsave("results/.figs/GSE145281.umap.features.pdf", plot=., width=16, height=10)
+
+# plot the comparison 
+p = DimPlot(GSE145281, reduction = "tsne", label = TRUE, pt.size = 0.5) + NoLegend() 
+# DimPlot(GSE145281, split.by = "patient", group.by="response") %>% 
+ggsave("results/.figs/GSE145281.tsne.cluster.pdf", plot=p)
+
+grouping = c(2,7)
+
+library(ggpubr)
+gse.curr = GSE145281[, GSE145281$seurat_clusters %in% grouping] 
+p = VlnPlot(gse.curr, features = c("CD8A", "CD8B", "GZMB", "GZMK", "GZMH", "gdt.di"), split.by = "response", group.by="seurat_clusters", pt.size=0.3)
+
+features.all = c("CD8A", "CD8B", "GZMB", "GZMK", "GZMH", "gdt.di")
+features.gene = intersect(rownames(gse.curr), features.all) 
+
+avi.dt = cbind(gse.curr@meta.data,  t(gse.curr@assays$RNA@data[features.gene,])) %>% 
+	melt(id.vars=c("response", "seurat_clusters", "patient"), measure.vars=c(features.all))
+
+p = ggplot(avi.dt, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") + facet_wrap(variable ~seurat_clusters, scales = "free") + theme_bw()
+ggsave("results/.figs/GSE145281.gdt.di.features.response.pdf", plot=p, width=10, height=8)
+
+p = ggplot(avi.dt[avi.dt$variable %in% "gdt.di",], aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T, aes(fill=as.factor(response))) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") ++ theme_bw()
+ggsave("results/.figs/GSE145281.gdt.di.features.response.pdf", plot=p, width=10, height=8)
+
+avi.curr = avi.dt[avi.dt$variable %in% "gdt.di",] 
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=response] %>% 
+melt(id.vars=c("response")) %>% 
+.[,response.lab:=ifelse(response,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =response]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(~response.lab)
+ ggsave("results/.figs/GSE145281.gdt.pie.response.pdf", p)
+
+ p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") + theme_bw()
+ggsave("results/.figs/GSE145281.gdt.di.response.pdf", plot=p, width=10, height=8)
+
+
+avi.curr = data.table(avi.curr)
+avi.curr[,response:=as.factor(response)]
+avi.curr[,seurat_clusters:=as.factor(seurat_clusters)]
+
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=.(response,seurat_clusters)] %>% 
+melt(id.vars=c("response", "seurat_clusters")) %>% 
+.[,response.lab:=ifelse(response==1,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =.(response,seurat_clusters)]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(seurat_clusters~response.lab) 
+ ggsave("results/.figs/GSE145281.gdt.pie.response.bycluster.pdf", p)
+
+ p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") +  facet_wrap(variable ~seurat_clusters, scales = "fixed") +
+  theme_bw()
+ggsave("results/.figs/GSE145281.gdt.di.response.bycluster.pdf", plot=p, width=10, height=8)
+
+
+
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=.(patient, response)] %>% 
+melt(id.vars=c("patient", "response")) %>% 
+.[,response.lab:=ifelse(response==1,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =.(patient, response)]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(~patient) 
+ ggsave("results/.figs/GSE145281.gdt.pie.patient.pdf", p)
+
+
+```
+## LEE data
+```{r}
+
+gdt.out = fread("/liulab/asahu/projects/icb/data/gdt/pbmc.gdt2_t_nk/tensorboardLog/20200606-173423/outputs/val_2_prediction.csv")
+
+
+lee.sco$gdt.di = gdt.out$is.tgd.output
+
+FeaturePlot(lee.sco, features = c("gdt.di", "gdt", "TRDC", "TRGC1", "TRGC2","CD3E" , "CD3D",  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH"), reduction="umap") %>% 
+ggsave("results/.figs/lee.sco.umap.features.pdf", plot=., width=16, height=10)
+
+
+FeaturePlot(lee.sco, reduction = "umap", features= sort(grep("^TR", colnames(lee.sco@meta.data), value=T))) %>% 
+ggsave("results/.figs/lee.sco.umap.TRXs.pdf", plot=.,width=16, height=10)
+
+sort(grep("TRG[V,C]", rownames(lee.sco), value=T))
+
+FeaturePlot(lee.sco, reduction = "umap", features= sort(grep("TRG[V,C]", rownames(lee.sco), value=T))) %>% 
+ggsave("results/.figs/lee.sco.umap.TRG_VC.pdf", plot=.,width=16, height=10)
+
+inx.curr = which(lee.sco$Treatment.Cycle == "C1D1" & lee.sco$response %in% c("PR", "PD", "CR"))
+```
+
+## lee only pre-treatment
+```{r}
+lee.sco.pre = lee.sco[,inx.curr]
+
+p = DimPlot(lee.sco.pre, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() 
+ggsave("results/.figs/lee.sco.pre.umap.cluster.pdf", plot=p)
+
+
+features.all = c("CD8A", "CD8B", "GZMB", "GZMK", "GZMH", "TRBV", "TRDV",  "TRGV", "gdt.di")
+features.gene = intersect(rownames(lee.sco.pre), features.all) 
+features.meta = c("response", "seurat_clusters", "patient.name", features.all) %>% 
+intersect(colnames(lee.sco@meta.data))
+
+avi.dt = cbind(lee.sco.pre@meta.data[,features.meta],  t(lee.sco.pre@assays$RNA@data[features.gene,])) %>% 
+	melt(id.vars=c("response", "seurat_clusters", "patient.name"), measure.vars=c(features.all)) %>% 
+	as.data.table %>% 
+.[(seurat_clusters %in% c(9,1,3,7,11,10)) & (response %in% c("CR", "PD"))] %>% 
+.[,response:=ifelse(response=="CR", 1, 0)]
+
+p = ggplot(avi.dt, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) +# geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") + facet_wrap(variable ~seurat_clusters, scales = "free") + theme_bw()
+ggsave("results/.figs/lee.sco.pre.gdt.di.features.response.pdf", plot=p, width=20, height=15)
+
+
+avi.curr = avi.dt[avi.dt$variable %in% "gdt.di",] 
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=response] %>% 
+melt(id.vars=c("response")) %>% 
+.[,response.lab:=ifelse(response,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =response]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(~response.lab)
+ ggsave("results/.figs/lee.sco.pre.gdt.pie.response.pdf", p)
+
+ p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") + theme_bw()
+ggsave("results/.figs/lee.sco.pre.gdt.di.response.pdf", plot=p, width=10, height=8)
+
+
+avi.curr = data.table(avi.curr)
+avi.curr[,response:=as.factor(response)]
+avi.curr[,seurat_clusters:=as.factor(seurat_clusters)]
+
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=.(response,seurat_clusters)] %>% 
+melt(id.vars=c("response", "seurat_clusters")) %>% 
+.[,response.lab:=ifelse(response==1,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =.(response,seurat_clusters)]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(seurat_clusters~response.lab) 
+ ggsave("results/.figs/lee.sco.pre.gdt.pie.response.bycluster.pdf", p)
+
+ p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+ stat_compare_means(method = "wilcox.test") +  facet_wrap(variable ~seurat_clusters, scales = "fixed") +
+  theme_bw()
+ggsave("results/.figs/lee.sco.pre.gdt.di.response.bycluster.pdf", plot=p, width=10, height=8)
+
+
+
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>0.55)/.N, "NK/CD8T"=sum(value <= 0.55)/.N), by=.(patient, response)] %>% 
+melt(id.vars=c("patient", "response")) %>% 
+.[,response.lab:=ifelse(response==1,"responder", "nonresponder")] %>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+.[,ypos:=cumsum(prop)-0.5*prop, by =.(patient, response)]
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(~patient) 
+ ggsave("results/.figs/lee.sco.pre.gdt.pie.patient.pdf", p)
+
+```
+## Creating of new markers of gdts
+
+```{r}
+## gtd specific genes
+library(Matrix)
+tgd.specific.genes = c("TMEM132C", "GALNT18", "FBXO39", "NFASC", "HNF4G","KRT84", "CYP2C8", "LIM2", "TFCP2L1", 
+	"AC012531.3", "KLKB1", "MFAP2")
+
+
+pbmc.combined$gdt.specific.genes.exp = colSums(pbmc.combined@assays$RNA@data[rownames(pbmc.combined) %in% tgd.specific.genes,])
+
+gdt.blood.marker = fread("~/liulab_home/data/single_cell/markers/./blood_cell_category_rna_gdT-cell_Cell.tsv")
+exp.curr = pbmc.combined@assays$RNA@data[rownames(pbmc.combined) %in% gdt.blood.marker$Gene,]
+tissue.specificity.matched = gdt.blood.marker[match(rownames(exp.curr),Gene)]$`RNA tissue specificity score` %>% as.numeric %>% ifelse(is.na(.), 1,.)
+pbmc.combined$gdt.specific.enhanced.exp = colSums(exp.curr)
+pbmc.combined$gdt.specific.enhanced.exp.weighted = t(exp.curr) %*% tissue.specificity.matched
+FeaturePlot(pbmc.combined, reduction="tsne", features =c("gdt.specific.enhanced.exp", "gdt.specific.enhanced.exp.weighted", "gdt.specific.genes.exp", "TRDC", "TRGC1", "TRGC2")) %>% 
+ggsave("results/.figs/pbmc.combined.tsne.tgd.specific.exp.genes.pdf", plot=., width=16, height=10)
+
+marker.exp.dt = data.table(
+	gene = rownames(exp.curr),
+nk.1 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==11]), 
+nk.2 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==32]), 
+gdt.1 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==12]), 
+gdt.2 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==23]) ,
+cd8.1 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==13]) ,
+cd8.2 = rowMeans(exp.curr[,pbmc.combined$seurat_clusters==19]) 
+)
+
+max.2 = function(x) sort(x,decreasing=T)[2]
+marker.exp.dt$gdt.1.filter=marker.exp.dt$gdt.1 - apply(marker.exp.dt[,.(nk.1, nk.2, cd8.1, cd8.2)],1, max.2) 
+marker.exp.dt$gdt.2.filter=marker.exp.dt$gdt.2 - apply(marker.exp.dt[,.(nk.1, nk.2, cd8.1, cd8.2)],1, max.2) 
+marker.exp.dt[order(gdt.1.filter)]
+marker.exp.dt[order(gdt.2.filter)]
+marker.sel = marker.exp.dt[gdt.1.filter>0 | gdt.2.filter>0] %>%
+.[,weight:=ifelse(gdt.1.filter> gdt.2.filter, gdt.1.filter, gdt.2.filter)]
+
+exp.curr.sel = pbmc.combined@assays$RNA@data[ marker.sel$gene,]
+tissue.specificity.matched = gdt.blood.marker[match(rownames(exp.curr.sel),Gene)]$`RNA tissue specificity score` %>% as.numeric %>% ifelse(is.na(.), 1,.)
+pbmc.combined$gdt.specific.enhanced = colSums(exp.curr.sel)
+pbmc.combined$gdt.specific.enhanced.weighted = (t(exp.curr.sel) %*% tissue.specificity.matched)[,1]
+pbmc.combined$gdt.specific.enhanced.weighted2 = (t(exp.curr.sel) %*% marker.sel$weight)[,1]
+
+FeaturePlot(pbmc.combined, reduction="tsne", features =c("gdt","gdt.specific.enhanced.exp.weighted", "gdt.specific.enhanced", "gdt.specific.enhanced.weighted",  "gdt.specific.enhanced.weighted2", "TRDC", "TRGC1", "TRGC2", "CD8A", "CD8B")) %>% 
+ggsave("results/.figs/pbmc.combined.umap.tgd.specific.genes.sel.pdf", plot=., width=16, height=10)
+
+# create contours 
+
+pbmc.contour = pbmc.combined[,pbmc.combined$seurat_clusters %in% c(11,32,12, 23, 19, 13)]
+p1 = ContourDimPlot(object = pbmc.combined, object.contour = pbmc.contour ,  features="gdt.specific.enhanced.weighted2", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram")
+ggsave("results/.figs/pbmc.combined.tsne.tgd.contour.feature.pdf", p1)
+
+#gdt.specific.enhanced.weighted
+
+p1 = ContourDimPlot(object = pbmc.combined, object.contour = pbmc.contour ,  features="gdt.specific.enhanced.weighted", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+ggsave("results/.figs/pbmc.combined.tsne.gdt.specific.enhanced.weighted.pdf", p1)
+
+
+p1 = ContourDimPlot(object = pbmc.combined, object.contour = NULL,  features="gdt", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+ggsave("results/.figs/pbmc.combined.tsne.contour.gdt.pdf", p1)
+
+p1 = ContourDimPlot(object = pbmc.combined, object.contour = pbmc.contour,  features="gdt.specific.enhanced.exp.weighted", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+ggsave("results/.figs/pbmc.combined.tsne.contour.gdt.specific.enhanced.exp.weighted.pdf", p1)
+
+``` 
+
+## Identify gdT with the new criteria in gse and lee data
+```{r}
+library(Seurat)
+library(magrittr)
+library(Matrix)
+lee.sco.pre = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.pretreatment.harmony.RDS")
+lee.sco.pre.singler = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.singleRannotation.RDS")
+lee.sco.pre$singleR.annot = lee.sco.pre.singler$HumanPrimaryCellAtlasData.fine$pruned.labels
+aa = lee.sco.pre.singler$HumanPrimaryCellAtlasData.main$pruned.labels %>% table
+aa = aa[aa > 300]
+ lee.sco.pre$singleR.annot.pruned = ifelse(lee.sco.pre$singleR.annot %in% "T_cell:gamma-delta", 
+ "T_cell:gamma-delta", 
+ifelse(lee.sco.pre.singler$HumanPrimaryCellAtlasData.main$pruned.labels %in% names(aa), 
+	lee.sco.pre.singler$HumanPrimaryCellAtlasData.main$pruned.labels, NA))
+ p =DimPlot(object = lee.sco.pre, reduction = "tsne", group.by="singleR.annot.pruned", label = TRUE, pt.size=0.2)  + scale_alpha(0.5)
+ ggsave("results/.figs/lee.pre.tsne.singler.cluster.pdf", plot=p)
+
+lee.sco.pre %<>% get.gdt.bloodatlas %>% 
+get.TR.expression
+
+
+FeaturePlot(lee.sco.pre, reduction="tsne", features =c("gdt","gdt.specific.enhanced.exp.weighted", "gdt.specific.enhanced", "gdt.specific.enhanced.weighted",  "gdt.specific.enhanced.weighted2", "TRGV", "TRDV", "TRDD","TRDC", "TRBV", "CD8A", "CD8B",  "GNLY", "NKG7", "FCGR3A")) %>% 
+ggsave("results/.figs/lee.sco.pre.tsne.tgd.specific.genes.sel.pdf", plot=., width=16, height=10)
+
+gdt.secreted = c("GM-CSF", "GZMB", "IFNG", "IL4", "IL5", "IL17A", "PRF1", "TNFA")
+gdt.secreted.pruned = c("CSF2", "GZMB", "IFNG", "IL4", "IL5", "IL17A", "PRF1", "TNF")
+gdt.surface=c("CD5", "CD16", "CD27", "CD28", "CD45RA", "CD56", "CD57", "CD62L", "CD69", "CD70H", "CD107a", "NKG2D")
+
+gdt.surface=c("CD5", "FCGR3A", "FCGR3B", "CD27", "CD28", "CD3G", "NCAM1", "B3GAT1", "SELL", "CD69", "CD70", "LAMP1", "KLRK1")
+setdiff(gdt.surface, rownames(lee.sco.pre))
+setdiff(gdt.secreted.pruned , rownames(lee.sco.pre))
+FeaturePlot(pbmc.combined, reduction="tsne", features =gdt.secreted.pruned ) %>% 
+ggsave("results/.figs/pbmc.combined.gdt.secreted.pdf", plot=., width=16, height=10)
+FeaturePlot(pbmc.combined, reduction="tsne", features =gdt.surface) %>% 
+ggsave("results/.figs/pbmc.combined.gdt.surface.pdf", plot=., width=16, height=10)
+
+
+ p =DimPlot(object = lee.sco.pre, reduction = "tsne",  label = TRUE, pt.size=0.2)  + scale_alpha(0.5) + NoLegend() 
+ ggsave("results/.figs/lee.pre.tsne.seurat.cluster.pdf", plot=p)
+
+ lee.pre.sub =  lee.sco.pre[, lee.sco.pre$seurat_clusters %in% c(0,1,12,5,8,4,9)]
+ lee.pre.sub %<>%  Seurat::NormalizeData(verbose = FALSE) %>%
+    FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
+    ScaleData(verbose = FALSE) %>% 
+    RunPCA(pc.genes = pbmc@var.genes, npcs = 50, verbose = FALSE)
+ lee.pre.sub %<>%
+    RunTSNE(reduction = "pca", dims = 1:50) %>% 
+    FindNeighbors(reduction = "pca", dims = 1:50) %>% 
+    FindClusters(resolution = 0.5) %>% 
+    identity()
+
+FeaturePlot(lee.pre.sub, reduction="tsne", features =c("gdt","gdt.specific.enhanced.exp.weighted", "gdt.specific.enhanced", "gdt.specific.enhanced.weighted",  "gdt.specific.enhanced.weighted2", "TRGV", "TRDV", "TRDD","TRDC", "TRBV", "CD8A", "CD8B",  "GNLY", "NKG7", "FCGR3A")) %>% 
+ggsave("results/.figs/lee.pre.sub.tsne.tgd.specific.genes.sel.pdf", plot=., width=16, height=10)
+FeaturePlot(lee.pre.sub, reduction="tsne", features =gdt.secreted.pruned ) %>% 
+ggsave("results/.figs/lee.pre.sub.gdt.secreted.pdf", plot=., width=16, height=10)
+FeaturePlot(lee.pre.sub, reduction="tsne", features =gdt.surface) %>% 
+ggsave("results/.figs/lee.pre.sub.gdt.surface.pdf", plot=., width=16, height=10)
+
+p1 = ContourDimPlot(object = lee.pre.sub, object.contour = lee.pre.sub,  features="gdt.specific.enhanced.exp.weighted", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="gam") 
+ggsave("results/.figs/lee.pre.sub.tsne.contour.gdt.specific.enhanced.exp.weighted.pdf", p1)
+
+lee.pre.sub.contour = lee.pre.sub[,lee.pre.sub@reductions$tsne@cell.embeddings[,1] > -5]
+p1 = ContourDimPlot(object = lee.pre.sub, object.contour = lee.pre.sub,  features="gdt.specific.enhanced.exp.weighted", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+ggsave("results/.figs/lee.pre.sub.tsne.contour.gdt.krigged.pdf")
+
+
+
+grouping = c(3,11,12,7,10,0, 13, 8)
+library(ggpubr)
+library(data.table)
+lee.pre.sub %<>% get.gdt.bloodatlas 
+gse.curr = lee.pre.sub[, lee.pre.sub$seurat_clusters %in% grouping] 
+features.all = c("CD8A", "CD8B", "GZMB", "GZMK", "GZMH", "TRGV", "TRDV", "TRDC", "gdt.specific.enhanced.exp.weighted")
+features.gene = intersect(rownames(gse.curr), features.all) 
+
+avi.dt = cbind(gse.curr@meta.data,  t(gse.curr@assays$RNA@data[features.gene,]))%>%
+	melt(id.vars=c("response", "seurat_clusters", "patient.name"), measure.vars=features.all) %>%  as.data.table  
+
+avi.curr = avi.dt[avi.dt$variable %in% "gdt.specific.enhanced.exp.weighted",] 
+
+avi.summ = avi.curr  %>% as.data.table %>% 
+.[,.(gdt=sum(value>=quantile(value, probs=0.9))/.N, "NK/CD8T"=sum(value<quantile(value, probs=0.9))/.N), by=response] %>% 
+melt(id.vars=c("response")) %>% 
+.[,response.lab:=response]%>% 
+.[order(value,decreasing=T)] %>%
+.[,prop:=value*100] %>% 
+ .[,ypos:=cumsum(prop)-0.5*prop, by =response]
+
+
+p = ggplot(avi.summ, aes(x="", y=prop, fill=variable)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = variable), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1") + facet_wrap(~response.lab)
+ ggsave("results/.figs/lee.pre.sub.gdt.pie.response.pdf", p)
+
+avi.curr = avi.dt[variable %in% c("TRGV", "TRDV", "TRDC"),][response %in% c("CR", "PD")] 
+p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+stat_compare_means(method = "wilcox.test") + facet_wrap(~variable, scales="free") +
+theme_bw()
+ggsave("results/.figs/lee.pre.sub.TRGD.response.pdf", plot=p) 
+
+
+avi.curr = avi.dt[variable %in% c("TRGV", "TRDV", "TRDC")] %>% 
+.[,response:=factor(response, levels=c("CR", "PR", "PD"))] 
+p = ggplot(avi.curr, aes(x=as.factor(response), y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+stat_compare_means(method = "kruskal.test") + facet_wrap(~variable, scales="free") +
+theme_bw()
+ggsave("results/.figs/lee.pre.sub.TRGD.response2.pdf", plot=p, width=9) 
+
+ ```
+## GSE 
+```{r}
+GSE145281 %<>% get.gdt.bloodatlas %>% get.TR.expression
+p1 = ContourDimPlot(object = GSE145281, object.contour = GSE145281,  features="gdt.specific.enhanced.exp.weighted", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+ggsave("results/.figs/GSE145281.tsne.contour.gdt.krigged.pdf")
+grouping = c(2,7,10) 
+library(ggpubr)
+gse.curr = GSE145281[, GSE145281$seurat_clusters %in% grouping] 
+features.all = c("CD8A", "CD8B", "GZMB", "GZMK", "GZMH", "TRGV", "TRDV", "TRDC", "gdt.specific.enhanced.exp.weighted")
+features.gene = intersect(rownames(gse.curr), features.all)
+avi.dt = cbind(gse.curr@meta.data,  t(gse.curr@assays$RNA@data[features.gene,]))
+features.all %<>% intersect(colnames(avi.dt))
+avi.dt %<>% 
+	melt(id.vars=c("response", "seurat_clusters", "patient"), measure.vars=features.all) %>%  as.data.table  
+avi.curr = avi.dt[variable %in% "gdt.specific.enhanced.exp.weighted",]
+p = ggplot(avi.curr, aes(x=response, y = value)) + 
+geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+stat_compare_means(method = "wilcox.test")  +
+theme_bw()
+ggsave("results/.figs/GSE145281.tdg.bloodatlas.response.pdf", plot=p)  
+```
+
+
+```{r}
+
+list2 = list.files(full.names =T, recursive =T, pattern = "*.rds", path = "/liulab/zzeng/Tigger/static/data_private_computed/scICB/")
+scrna.seurat.list = c(list2)
+scrna.seurat.meta = lapply(scrna.seurat.list, function(tt) {
+	type = gsub(".rds", basename(tt),replacement="")
+	database = basename(dirname(tt))
+	c(fid=tt, type=type, database=database)
+}) %>% 
+do.call(rbind,.) %>% as.data.table() %>%
+.[,lab:=paste(type, database, sep=":")]
+
+dataset.sel = which(scrna.seurat.meta$type[1:9] %in% c("cd45_positive", "tcell") )
+require(doMC)
+require(foreach)
+registerDoMC(cores = 18)
+out = foreach(ii = dataset.sel, .inorder=F, .combine=rbind) %dopar%{
+# for (ii in dataset.sel) {
+	sco = readRDS(file=scrna.seurat.meta[ii]$fid)
+	sco@project.name = scrna.seurat.meta[ii]$lab
+	sco$patient.name = sco$sample
+	try(
+	{
+	if( sum(grepl("^[0-9]", rownames(sco))) > 1000 ){
+		aa = rownames(sco)
+		gene.eg.dt = clusterProfiler::bitr(aa, toType="SYMBOL", fromType="ENTREZID", OrgDb="org.Hs.eg.db")
+		gene.eg.dt1 = gene.eg.dt[match(aa,gene.eg.dt$ENTREZID),]
+		sco@assays$RNA@data  %<>% set_rownames(gene.eg.dt1$SYMBOL)
+	}
+	sco %<>% get.gdt.bloodatlas %>% get.TR.expression
+	p1 = ContourDimPlot(object = sco, object.contour = sco,  features="gdt.specific.enhanced.exp.weighted", reduction = "umap", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram")
+	ggsave(sprintf("results/.figs/%s.tsne.contour.gdt.gam.pdf", sco@project.name), plot=p1) 
+})
+
+	return(sco)
+}
+
+out = list()
+for (ii in dataset.sel) {
+	sco = readRDS(file=scrna.seurat.meta[ii]$fid)
+	sco@project.name = scrna.seurat.meta[ii]$lab
+	sco$patient.name = sco$sample
+	if( sum(grepl("^[0-9]", rownames(sco))) > 1000 ){
+		aa = rownames(sco)
+		gene.eg.dt = clusterProfiler::bitr(aa, toType="SYMBOL", fromType="ENTREZID", OrgDb="org.Hs.eg.db")
+		gene.eg.dt1 = gene.eg.dt[match(aa,gene.eg.dt$ENTREZID),]
+		sco@assays$RNA@data  %<>% set_rownames(gene.eg.dt1$SYMBOL)
+	}
+
+	sco %<>% get.gdt.bloodatlas %>% get.TR.expression
+	out[[ii]] = sco
+}
+names(out) = scrna.seurat.meta$lab[1:9]
+
+## through manual inspection 
+grouping.list = list()
+grouping.list[["cd45_positive:hg38_GSE120575"]] = c(7)
+grouping.list[["cd45_positive:hg38_GSE123813"]] = c(23,4,22)
+grouping.list[["tcell:hg38_GSE115978"]] = c(1,3,4,5,6,9)
+grouping.list[["tcell:hg38_GSE120575"]] = c(1,4,7,8,11)
+grouping.list[["tcell:hg38_GSE123813"]] = c(7,5,11,13,14,12)
+
+library(ggpubr)
+
+for (dataset.curr in names(grouping.list)) {
+	sco = out[[dataset.curr]]
+	grouping = grouping.list[[dataset.curr]]
+	sco = get.TR.expression(sco, is.log=F)
+	gse.curr = sco %>% SubsetData(assay="RNA", cell = which(sco$seurat_clusters %in% grouping)) 
+	all.col = gse.curr@meta.data %>% colnames 
+	tr.col = all.col %>% grep("TR[DG][VDJC]",., value=T)
+	features.all = c(tr.col, "gdt.specific.enhanced.exp.weighted")
+	
+	avi.dt = gse.curr@meta.data %>% as.data.table
+	if(all(c("treat", "therapy") %in% all.col )){
+		avi.dt = avi.dt[treat=="pre" & therapy=="anti-PD1"]
+	}
+	features.all %<>% intersect(colnames(avi.dt))
+	avi.dt %<>% 
+	melt(id.vars=c("response", "seurat_clusters"), measure.vars=features.all) %>%  as.data.table  
+	if(length(unique(avi.dt$variable)) > 1 ){
+		p = ggplot(avi.dt, aes(x=response, y = value)) + 
+		geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+		stat_compare_means(method = "wilcox.test")  +
+		facet_wrap(~variable, scales = "free") +
+		theme_bw()
+	}else{
+		p = ggplot(avi.dt, aes(x=response, y = value)) + 
+		geom_violin(trim=T) + geom_jitter(size=0.3, alpha=0.5) + 
+		stat_compare_means(method = "wilcox.test")  +
+		theme_bw()
+	}
+
+	ggsave(sprintf("results/.figs/%s.tdg.response.pdf", dataset.curr), plot=p, width = 12, height=9)
+
+}
+```
+
+## Determine survival/response association with gdt cells
+
+
+```{r}
+library(survminer)
+library(survival)
+library(tidyr)
+singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
+tcga.surv.genes = readRDS("~/liulab_home/data/tcga/tcga.cox.genes.Rds")
+genes.sel= tcga.surv.genes$OS[order(P)[1:500]]$genes
+quantize = function(tt, prob.max=0.5, prob.min=0.5) {
+  thr.max = quantile(tt,probs=prob.max)
+  thr.min = quantile(tt,probs=prob.min)
+  ifelse(tt > thr.max, 1, ifelse(tt<thr.min, 0, NA))
+}
+
+quantize_gradient = function(tt, grades=4) {
+  thrs = seq(0,1,length.out = grades+1)
+ thrs = quantile(tt,probs=thrs[-c(1,length(thrs))])
+  sapply(tt, function(uu) sum(thrs<uu))
+}
+
+calc.cor = function(x,y, method="spearman") {
+	require(magrittr)
+	rownames(x) %<>% toupper
+	rownames(y) %<>% toupper
+	common = intersect(rownames(x), rownames(y))
+    cor(x[common,],y[common,], method=method, use = "pairwise.complete.obs") 
+}
+get.genesymbol = function(genes){
+	genes2replace = grepl("^[0-9]", genes)
+	genes.ez = genes[genes2replace]
+	if( length(genes.ez) > 10){
+		gene.eg.dt = clusterProfiler::bitr(genes.ez, toType="SYMBOL", fromType="ENTREZID", OrgDb="org.Hs.eg.db")
+		gene.eg.dt1 = gene.eg.dt[match(genes.ez,gene.eg.dt$ENTREZID),]
+		genes[genes2replace] = gene.eg.dt1$SYMBOL
+	}
+	genes
+}
+
+get.icb.dataset = function(exp.file, followup.file){
+	icb.exp = fread(exp.file)
+	icb.followup =  fread(followup.file)
+	gene.names = icb.exp[,1] %>% unlist %>% get.genesymbol
+	dataset.name = followup.file %>% basename  
+	icb.exp.mat = icb.exp[,-1] %>% as.matrix %>%
+	set_rownames(toupper(gene.names)) %>% t() %>%
+	scale(., center=T, scale=T) %>% t()
+	icb.followup = icb.followup[match(colnames(icb.exp.mat), Patient)]
+	genes.curr = intersect(rownames(icb.exp.mat), toupper(genes.sel))
+
+	gdt.inx = which(singler.dataset$HumanPrimaryCellAtlasData$ref.se@colData$label.fine == "T_cell:gamma-delta")
+	ref.exp = singler.dataset$HumanPrimaryCellAtlasData$norm.ref.se[,gdt.inx]
+	gamma.delta.score =  calc.cor(icb.exp.mat[genes.curr, ], ref.exp) %>% rowMeans(na.rm=T)
+	icb.followup$Tgd = gamma.delta.score[icb.followup$Patient]
+	icb.followup[,Tgd.q1:=quantize(Tgd, 0.75, 0.4)]
+	icb.followup[,Tgd.q2:=quantize_gradient(Tgd, 4)]
+	icb.followup$dataset = dataset.name
+	list(exp=icb.exp.mat, followup=icb.followup)
+}
+
+dataset.names = list.files(path = "/liulab/zzeng/Tigger/static/data_private/ICB/follow_up/")
+icb.datasets = list()
+for (dataset.name in dataset.names) {
+	followup.file = sprintf("/liulab/zzeng/Tigger/static/data_private/ICB/follow_up/%s", dataset.name)
+	exp.file = sprintf("/liulab/zzeng/Tigger/static/data_private/ICB/expression/%s", dataset.name)
+	icb.datasets[[dataset.name]] = get.icb.dataset(exp.file, followup.file) 
+}
+
+icb.followup = lapply(icb.datasets, function(tt) {
+	tryCatch(
+	tt$followup[,.(OS=OS/max(OS,na.rm=T), OS.Event, dataset, Tgd, Tgd.q1, Tgd.q2)], 
+	error = function(e) NULL
+	)}) %>% do.call(rbind, .)
+surv.factors.curr = icb.followup[ (!is.na(Tgd.q1))]
+fit1 <- survfit( Surv(OS, OS.Event) ~ Tgd.q1, data = surv.factors.curr )
+p1 = ggsurvplot_facet(fit1, surv.factors.curr, 
+	facet.by = "dataset",
+	scales = "free_x",
+	panel.labs.font = list(size= 8),
+	palette = "jco", pval = TRUE)
+pdf("results/.figs/icb/icb_gtd.pdf", width =10, height = 8)
+print(p1)
+dev.off()
+
+surv.factors.curr = icb.followup[(!is.na(Tgd.q2))]
+fit1 <- survfit(Surv(OS, OS.Event)~ Tgd.q2, data = surv.factors.curr )
+p1 = ggsurvplot_facet(fit1, surv.factors.curr, 
+	facet.by = "dataset",
+	scales = "free",
+	panel.labs.font = list(size= 8),
+	palette = "jco", pval = TRUE)
+pdf("results/.figs/icb/icb_gtd_grades.pdf", width =10, height = 8)
+print(p1)
+dev.off()
+
+
+icb.followup = lapply(icb.datasets, function(tt) {
+	tryCatch(
+	tt$followup[,.(PFS=PFS/max(PFS,na.rm=T), PFS.Event, dataset, Tgd, Tgd.q1, Tgd.q2)], 
+	error = function(e) NULL
+	)}) %>% do.call(rbind, .)
+surv.factors.curr = icb.followup[ (!is.na(Tgd.q1))]
+fit1 <- survfit( Surv(PFS, PFS.Event) ~ Tgd.q1, data = surv.factors.curr )
+p1 = ggsurvplot_facet(fit1, surv.factors.curr, 
+	facet.by = "dataset",
+	scales = "free_x",
+	panel.labs.font = list(size= 8),
+	palette = "jco", pval = TRUE)
+pdf("results/.figs/icb/icb_gtd.pfs.pdf", width =10, height = 8)
+print(p1)
+dev.off()
+
+surv.factors.curr = icb.followup[(!is.na(Tgd.q2))]
+fit1 <- survfit(Surv(PFS, PFS.Event)~ Tgd.q2, data = surv.factors.curr )
+p1 = ggsurvplot_facet(fit1, surv.factors.curr, 
+	facet.by = "dataset",
+	scales = "free_x",
+	panel.labs.font = list(size= 8),
+	palette = "jco", pval = TRUE)
+pdf("results/.figs/icb/icb_gtd_grades.pfs.pdf", width =10, height = 8)
+print(p1)
+dev.off()
+
+
+px = pROC::roc(icb.followup$Response, icb.followup$Tgd)
+pdf(".figs/icb/genentech_gtd_response.pdf")
+plot(px)
+dev.off()
+
+```

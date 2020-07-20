@@ -1,0 +1,62 @@
+---
+title: "Analysis of gdT in immunotherapy trials"
+output: html_notebook
+---
+
+# Goal : To show responders have higher gamma-delta receptors
+## 
+- 1. Combine cdr3 sequence from all datasets
+- 2. Get meta data of response and survival 
+- 3. Total number of reads in each rnaseq sample
+- 4. Get cdr3 quantification of each sample (separately for TRD and TRG and  V,D,J and C)
+- 5. Show responders and non-responders have significant difference in TRD and TRG 
+- 6. Control for CD8B levels in the differences
+
+```{r}
+library(survminer)
+library(survival)
+library(magrittr)
+library(tidyr)
+cdr3.files = list.files("~/liulab_home/data/immunotherapy-trials/trust4/mUC_PDL1_Mariathasan", pattern = "*.tsv", full.names = T)
+require(doMC)
+require(foreach)
+registerDoMC(cores = 48)
+trust4 = foreach(cdr3.file  = cdr3.files, .inorder=T, .combine=rbind) %dopar%{
+	sample.name = cdr3.file %>% basename %>% 
+	gsub("GO29293_ngs_rna_targrna_", ., replacement = "") %>%
+	strsplit(.,split="_") %>% unlist %>% 
+	grep("^SAM", .,value=T)
+	fread(cdr3.file) %>% 
+	.[,sample.name:=sample.name]
+}
+saveRDS(file="~/liulab_home/data/immunotherapy-trials/trust4/mUC_PDL1_Mariathasan/trust4.dt.RDS", trust4)
+trust4.trg = trust4[grepl("^TRG", V)|grepl("^TRG", D)| grepl("^TRG", J)|grepl("^TRG", C)] %>% 
+  .[!(CDR3aa %in% c("out_of_frame", "_" ))]
+trust4.trd = trust4[grepl("^TRD", V)|grepl("^TRD", D)| grepl("^TRD", J)|grepl("^TRD", C)] %>% 
+  .[!(CDR3aa %in% c("out_of_frame", "_"))]
+trust4.trg %<>% rbind(trust4.trd)
+trust4.trg.summ  = trust4.trg[,.(total.trgs=sum(`#count`)), by=sample.name]
+# trust4.trg1 = trust4.trg[!(CDR3aa %in% c("partial"))]
+```
+
+```{r}
+genentech.env = local({load("/liulab/asahu/data/ssgsea/xiaoman/genentech.phenotype.RData");environment()})
+surv.factors = genentech.env$aa 
+surv.factors$total.trgs = trust4.trg.summ[match(rownames(surv.factors), trust4.trg.summ$sample.name),]$total.trgs
+surv.factors %<>% as.data.table %>%
+.[,norm.trg:=total.trgs/sizeFactor]
+surv.factors[,norm.trg:=ifelse(is.na(norm.trg),0, norm.trg)]
+
+quantize_gradient = function(tt, grades=4) {
+  thrs = seq(0,1,length.out = grades+1)
+ thrs = quantile(tt,probs=thrs[-c(1,length(thrs))])
+  sapply(tt, function(uu) sum(thrs<uu))
+}
+
+surv.factors[,Tgd.q:=quantize_gradient(norm.trg, 4)]
+surv.factors = surv.factors[Tgd.q %in% c(0,3)]
+fit1 <- survfit( Surv(os, censOS) ~ Tgd.q, data = surv.factors )
+p1 = ggsurvplot(fit1, surv.factors, 
+                palette = "jco", pval = TRUE)
+ggsave(filename="results/.figs/Mariathasan.tdg.trust4.surv.pdf", print(p1))
+```
