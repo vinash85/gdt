@@ -255,14 +255,78 @@ dev.off()
 # 3. 
 
 ```{r}
-
+library(magrittr)
 library(tidyr)
-crispr = data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/Murad_Screen Hits.xlsx", sheet = 1))
+crispr = data.table(readxl::read_excel("data/Murad_Screen_Data.xlsx", sheet = 1))
 
-gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
- kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
-                                    organism     = 'hsa',
-                                    pvalueCutoff = 0.05)
+
+gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>% as.data.table
+
+crispr$ENTREZID = gene.eg.dt[match(crispr$id,gene.eg.dt$SYMBOL),]$ENTREZID
+crispr = crispr[!is.na(ENTREZID)]
+
+geneList = (crispr$`neg|rank`) %>% 
+set_names(crispr$ENTREZID) %>%  
+sort(., decreasing = TRUE)
+geneList = geneList[!(names(geneList) %>% duplicated)]
+
+
+ego3 <- gseKEGG(geneList     = geneList,
+               organism     = 'hsa',
+               minGSSize    = 120,
+               pvalueCutoff = 0.1,
+               verbose      = FALSE)
+
+
+ego3 <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "BP",
+              nPerm        = 1000,
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+ego3 <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "MF",
+              nPerm        = 1000,
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+geneList = (crispr$`pos|rank`) %>% 
+set_names(crispr$ENTREZID) %>%  
+sort(., decreasing = TRUE)
+geneList = geneList[!(names(geneList) %>% duplicated)]
+
+
+ego4 <- gseKEGG(geneList     = geneList,
+               organism     = 'hsa',
+               minGSSize    = 120,
+               pvalueCutoff = 0.1,
+               verbose      = FALSE)
+
+
+ego5 <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "BP",
+              nPerm        = 1000,
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+ego6 <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "MF",
+              nPerm        = 1000,
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
   p = clusterProfiler::dotplot(kk, showCategory=30)
  dir.create("results/.figs/murad")
  ggsave(filename = "results/.figs/murad/pathway.pdf",p)
@@ -274,7 +338,4 @@ gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType=
  ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
  
 ```
-## TCGA survival analysis 
 
-
-```
