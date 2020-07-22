@@ -1375,9 +1375,10 @@ get.enrich = function(genes, universe,
 
 ## Correlate between markers of TLS/GCR and gdT
 ```{r}
-
+library(ggplot2)
+library(ggrepel)
 ## Identify  TLS genes correled with TRD allele levels. 
-tls.genes = c("MS4A1", "CD40", "CXCR5", "CXCL13", "CCR7", "CCL19",  "CD8B", "PDCD1",  "CTLA4","HAVCR2", "CD274", "PDCD1LG2")
+tls.genes = c("MS4A1", "CD40", "CXCR5", "CXCL13", "CCR7", "CCL19",  "TFRC", "CD8B", "PDCD1",  "CTLA4","HAVCR2", "CD274", "PDCD1LG2")
 setdiff(tls.genes, rownames(project.skcm))
 grep("TRBV", rownames(project.skcm), value=T)
 temp = c("TRDV2", "TRGV9", "TRBV2")
@@ -1404,7 +1405,7 @@ trg.crispr.cor = WGCNA::corAndPvalue(x=project.skcm[trg.alleles,] %>% t,
 
 
 
-avi.dt = trg.crispr.cor$cor[c("TRDV2", "TRDV1", "TRDV3"),] %>% t  %>% data.table %>%
+avi.dt = trg.crispr.cor$cor[c("TRDV2", "TRDV1", "TRDV3", "TRBV2"),] %>% t  %>% data.table %>%
 	.[,gene:= colnames(trg.crispr.cor$cor)] %>%
 	.[!(is.na(TRDV1) | is.na(TRDV2))]
 
@@ -1450,120 +1451,61 @@ p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
 ggsave(file="results/.figs/gdt/pathway.cor.trdv2.neg.trdv1.pos.pdf",p)
 })
 
-avi.sel=avi.dt[intersect(
-	order(avi.dt$TRDV2,decreasing=F)[1:200], 
-	order(avi.dt$TRDV1,decreasing=F)[1:200] )]
-p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trdv2.neg.trdv1.neg.pdf",p)
 
 
-aa = fit.loess(avi.dt$TRDV1, avi.dt$TRDV3)
-inx.pos = (avi.dt$TRDV3 - aa$fitted) %>% order(decreasing=T) %>% 
-.[1:40]
-inx.neg = (aa$fitted- avi.dt$TRDV3 ) %>% order(decreasing=T) %>% 
-.[1:30]
-# avi.dt.sub = avi.dt[inx]
-avi.dt.sub = avi.dt[unique(c(
-	order(avi.dt$TRDV1,decreasing=F)[1:30],
-	order(avi.dt$TRDV3,decreasing=F)[1:30],
-	order(avi.dt$TRDV1,decreasing=T)[1:40],
-	order(avi.dt$TRDV3,decreasing=T)[1:40], 
-	inx.pos,
-	inx.neg
-	))]
-p.sc.volcano = ggplot(data=avi.dt, aes(x=TRDV1, y= TRDV3))  + 
-geom_point(alpha=0.5) +
-theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
-geom_text_repel(
-	data = avi.dt.sub,
-	 aes(x = TRDV1, y = TRDV3, label = gene),    
-	 size = 3,
-    box.padding = unit(0.35, "lines"),
-    point.padding = unit(0.3, "lines")
-    )  
-
-ggsave(file="results/.figs/gdt/gene.cor.trdv3.trdv1.pdf", p.sc.volcano, width=16, height=10)
-
-
-avi.sel=avi.dt[TRDV1>0.5 & TRDV3 > 0.4]
-p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trdv3.pos.trdv1.pos.pdf",p)
-
-try({
-p = get.enrich(genes=avi.dt[inx.pos]$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trdv3.pos.trdv1.neg.pdf",p)
-})
-
-try({
-p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trdv3.neg.trdv1.pos.pdf",p)
-})
-
-avi.sel=avi.dt[intersect(
-	order(avi.dt$TRDV3,decreasing=F)[1:200], 
-	order(avi.dt$TRDV1,decreasing=F)[1:200] )]
-p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trdv3.neg.trdv1.neg.pdf",p)
-
-
-
-library(ggplot2)
-library(ggrepel)
-avi.dt = trg.crispr.cor$cor[c("TRGV2", "TRGV9", "TRGV10"),] %>% t  %>% data.table %>%
+avi.dt = trg.crispr.cor$cor[c("TRDV2", "TRDV1", "TRDV3", "TRBV2"),] %>% t  %>% data.table %>%
 	.[,gene:= colnames(trg.crispr.cor$cor)] %>%
-	.[!(is.na(TRGV2) | is.na(TRGV2))]
-aa = fit.loess(avi.dt$TRGV2, avi.dt$TRGV9)
-inx.pos = (avi.dt$TRGV9 - aa$fitted) %>% order(decreasing=T) %>% 
+	.[!(is.na(TRDV2) | is.na(TRDV2))]
+aa = fit.loess(avi.dt$TRDV2, avi.dt$TRBV2)
+inx.pos = (avi.dt$TRBV2 - aa$fitted) %>% order(decreasing=T) %>% 
 .[1:70]
-inx.neg = (aa$fitted- avi.dt$TRGV9 ) %>% order(decreasing=T) %>% 
+inx.neg = (aa$fitted- avi.dt$TRBV2 ) %>% order(decreasing=T) %>% 
 .[1:70]
 # avi.dt.sub = avi.dt[inx]
 avi.dt.sub = avi.dt[unique(c(
-	order(avi.dt$TRGV2,decreasing=F)[1:30],
-	order(avi.dt$TRGV9,decreasing=F)[1:30],
-	order(avi.dt$TRGV2,decreasing=T)[1:40],
-	order(avi.dt$TRGV9,decreasing=T)[1:40], 
+	order(avi.dt$TRDV2,decreasing=F)[1:30],
+	order(avi.dt$TRBV2,decreasing=F)[1:30],
+	order(avi.dt$TRDV2,decreasing=T)[1:40],
+	order(avi.dt$TRBV2,decreasing=T)[1:40], 
 	inx.pos,
 	inx.neg
 	))]
-p.sc.volcano = ggplot(data=avi.dt, aes(x=TRGV2, y= TRGV9))  + 
+p.sc.volcano = ggplot(data=avi.dt, aes(x=TRDV2, y= TRBV2))  + 
 geom_point(alpha=0.5) +
 theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
 geom_text_repel(
 	data = avi.dt.sub,
-	 aes(x = TRGV2, y = TRGV9, label = gene),    
+	 aes(x = TRDV2, y = TRBV2, label = gene),    
 	 size = 3,
     box.padding = unit(0.35, "lines"),
     point.padding = unit(0.3, "lines")
     )  
 
-ggsave(file="results/.figs/gdt/gene.cor.trgv9.trgv2.pdf", p.sc.volcano, width=16, height=10)
+ggsave(file="results/.figs/gdt/gene.cor.trbv2.trdv2.pdf", p.sc.volcano, width=16, height=10)
 
 avi.sel=avi.dt[intersect(
-	order(avi.dt$TRGV9,decreasing=T)[1:200], 
-	order(avi.dt$TRGV2,decreasing=T)[1:200] )]
+	order(avi.dt$TRBV2,decreasing=T)[1:200], 
+	order(avi.dt$TRDV2,decreasing=T)[1:200] )]
 p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trgv9.pos.trgv2.pos.pdf",p)
+ggsave(file="results/.figs/gdt/pathway.cor.trbv2.pos.trdv2.pos.pdf",p)
 
 try({
 p = get.enrich(genes=avi.dt[inx.pos]$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trgv9.pos.trgv2.neg.pdf",p)
+ggsave(file="results/.figs/gdt/pathway.cor.trbv2.pos.trdv2.neg.pdf",p)
 })
 
 try({
 p = get.enrich(genes=avi.dt[inx.neg]$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trgv9.neg.trgv2.pos.pdf",p)
+ggsave(file="results/.figs/gdt/pathway.cor.trbv2.neg.trdv2.pos.pdf",p)
 })
 
 avi.sel=avi.dt[intersect(
-	order(avi.dt$TRGV9,decreasing=F)[1:200], 
-	order(avi.dt$TRGV2,decreasing=F)[1:200] )]
+	order(avi.dt$TRBV2,decreasing=F)[1:200], 
+	order(avi.dt$TRDV2,decreasing=F)[1:200] )]
 p = get.enrich(genes=avi.sel$gene, universe=avi.dt$gene)
-ggsave(file="results/.figs/gdt/pathway.cor.trgv9.neg.trgv2.neg.pdf",p)
-
-
-
+ggsave(file="results/.figs/gdt/pathway.cor.trbv2.neg.trdv2.neg.pdf",p)
 ```
+
 ## correlate with singler annotation
 ```{r}
 cor.out = lapply(singleR.dataset, function(ii) calculate.singleR.corelation(mat=project.skcm, ref.data=ii)) 
