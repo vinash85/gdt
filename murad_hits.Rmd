@@ -252,16 +252,12 @@ dev.off()
 ## Murad hits all genes
 # 1. GSEA analysis 
 # 2. MSIG db enrichment. Check melavolnte pathway. 
-# 3. 
 
 ```{r}
 library(magrittr)
 library(tidyr)
 crispr = data.table(readxl::read_excel("data/Murad_Screen_Data.xlsx", sheet = 1))
-
-
 gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>% as.data.table
-
 crispr$ENTREZID = gene.eg.dt[match(crispr$id,gene.eg.dt$SYMBOL),]$ENTREZID
 crispr = crispr[!is.na(ENTREZID)]
 
@@ -269,6 +265,10 @@ geneList = (crispr$`neg|rank`) %>%
 set_names(crispr$ENTREZID) %>%  
 sort(., decreasing = TRUE)
 geneList = geneList[!(names(geneList) %>% duplicated)]
+geneList.rev = (crispr$`pos|rank`) %>% 
+set_names(crispr$ENTREZID) %>%  
+sort(., decreasing = TRUE)
+geneList.rev = geneList.rev[!(names(geneList.rev) %>% duplicated)]
 
 
 ego3 <- gseKEGG(geneList     = geneList,
@@ -296,10 +296,6 @@ ego3 <- gseGO(geneList     = geneList,
               pvalueCutoff = 0.05,
               verbose      = FALSE)
 
-geneList = (crispr$`pos|rank`) %>% 
-set_names(crispr$ENTREZID) %>%  
-sort(., decreasing = TRUE)
-geneList = geneList[!(names(geneList) %>% duplicated)]
 
 
 ego4 <- gseKEGG(geneList     = geneList,

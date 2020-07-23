@@ -119,8 +119,8 @@ ggsave("results/.figs/pbmc.combined.tsne.gdT.gs.score.pdf", plot=.)
 FeaturePlot(pbmc.combined, reduction = "tsne", features= grep("^TR", colnames(pbmc.combined@meta.data), value=T)) %>% 
 ggsave("results/.figs/pbmc.combined.tsne.TRXs.pdf", plot=.,width=16, height=10)
 
-FeaturePlot(pbmc.combined, features = c("gdt", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
-ggsave("results/.figs/pbmc.combined.umap.features.pdf", plot=., width=16, height=10)
+FeaturePlot(pbmc.combined,  reduction = "tsne", features = c("gdt", "NLRC5", "TRDC", "TRGC1", "TRGC2","CD3E" ,  "CD8A", "GNLY", "NKG7", "PRF1", "GZMB", "GZMK", "GZMH")) %>% 
+ggsave("results/.figs/pbmc.combined.tsne.features.pdf", plot=., width=16, height=10)
 
 FeaturePlot(pbmc.combined, reduction = "tsne", features= "gdt") %>% 
 ggsave("results/.figs/pbmc.combined.tsne.gdT.gs.score.pdf", plot=.)
