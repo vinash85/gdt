@@ -1,0 +1,53 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+## Write gdT surv genes as input file for tigger 
+```{r}
+
+singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
+tcga.surv.genes = readRDS("~/liulab_home/data/tcga/tcga.cox.genes.Rds")
+genes.curr= tcga.surv.genes$OS[order(P)[1:500]]$genes
+gdt.inx = which(singler.dataset$HumanPrimaryCellAtlasData$ref.se@colData$label.fine == "T_cell:gamma-delta")
+ref.exp = singler.dataset$HumanPrimaryCellAtlasData$norm.ref.se[,gdt.inx]
+ref.exp.mean = ref.exp %>% rowMeans
+ref.exp.sel = ref.exp[rownames(ref.exp) %in% genes.curr,] %>% rowMeans() 
+data.table(names(ref.exp.sel), ref.exp.sel)%>% 
+write.table(file="../../results/tigger/inputs/gdT.scoring.tcga.surv.genes.txt", x = ., quote=F, row.names = F, col.names = F, sep= "\t")
+data.table(names(ref.exp.mean), ref.exp.mean)%>% 
+write.table(file="../../results/tigger/inputs/gdT.scoring.genes.txt", x = ., quote=F, row.names = F, col.names = F, sep="\t")
+```
+
+## The Code from Dian
+```{bash eval=F }
+cd /liulab/dianli/Tigger/
+
+source activate /homes/zzeng/miniconda3/envs/Tigger 
+
+python Tigger.py PATH_TO_INPUT_FILE/***.txt -e CCLE NonICB ICB -o /liulab/asahu/TiggerOutput/ANALYSIS_NAME/
+```
+
+```{bash}
+source activate /homes/zzeng/miniconda3/envs/Tigger 
+cd /liulab/dianli/Tigger/
+python Tigger.py ~/liulab_home/projects/gdt/results/tigger/inputs/gdT.scoring.tcga.surv.genes.txt -e CCLE NonICB ICB -o  ~/liulab_home/projects/gdt/results/tigger/outputs/gdT.scoring.tcga.surv.genes
+```
+
+## Write gdT dyfn genes from Murad as input file for tigger 
+```{r}
+
+library(tidyr)
+crispr.tophits = data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/Murad_Screen Hits.xlsx", sheet = 1))
+crispr = data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/Murad_Screen_Data.xlsx", sheet = 1))
+data.table(crispr$id)%>% 
+write.table(file="../../results/tigger/inputs/murad.tophits.genes.txt", x = ., quote=F, row.names = F, col.names = F, sep= "\t")
+
+data.table(crispr[crispr$`neg|rank`< 51]$id)%>% 
+write.table(file="../../results/tigger/inputs/murad.tophits.neg.genes.txt", x = ., quote=F, row.names = F, col.names = F, sep= "\t")
+```
+
+```{bash}
+python Tigger.py ~/liulab_home/projects/gdt/results/tigger/inputs/murad.tophits.genes.txt -e CCLE NonICB ICB -o  ~/liulab_home/projects/gdt/results/tigger/outputs/murad.tophits.genes
+python Tigger.py ~/liulab_home/projects/gdt/results/tigger/inputs/murad.tophits.neg.genes.txt -e CCLE NonICB ICB -o  ~/liulab_home/projects/gdt/results/tigger/outputs/murad.tophits.neg.genes
+```
+

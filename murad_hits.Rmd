@@ -1,4 +1,7 @@
 ## Analysis of murad's dataset
+```{r}
+.libPaths(c("/liulab/asahu/rserver/R.3.6.3/", "/homes6/mtang/R/x86_64-pc-linux-gnu-library/3.6"))
+```
 
 ## Enrichment analysis
 
@@ -256,7 +259,12 @@ dev.off()
 ```{r}
 library(magrittr)
 library(tidyr)
-crispr = data.table(readxl::read_excel("data/Murad_Screen_Data.xlsx", sheet = 1))
+library(clusterProfiler)
+library(enrichplot)
+library(data.table)
+library(ggplot2)
+library()
+crispr = data.table(readxl::read_excel("../../data/Murad_Screen_Data.xlsx", sheet = 1))
 gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>% as.data.table
 crispr$ENTREZID = gene.eg.dt[match(crispr$id,gene.eg.dt$SYMBOL),]$ENTREZID
 crispr = crispr[!is.na(ENTREZID)]
@@ -273,57 +281,45 @@ geneList.rev = geneList.rev[!(names(geneList.rev) %>% duplicated)]
 
 ego3 <- gseKEGG(geneList     = geneList,
                organism     = 'hsa',
-               minGSSize    = 120,
-               pvalueCutoff = 0.1,
+               minGSSize =2,
+               pvalueCutoff = 1,
                verbose      = FALSE)
-
-
-ego3 <- gseGO(geneList     = geneList,
-              OrgDb        = org.Hs.eg.db,
-              ont          = "BP",
-              nPerm        = 1000,
-              minGSSize    = 100,
-              maxGSSize    = 500,
-              pvalueCutoff = 0.05,
-              verbose      = FALSE)
-
-ego3 <- gseGO(geneList     = geneList,
-              OrgDb        = org.Hs.eg.db,
-              ont          = "MF",
-              nPerm        = 1000,
-              minGSSize    = 100,
-              maxGSSize    = 500,
-              pvalueCutoff = 0.05,
-              verbose      = FALSE)
-
-
-
-ego4 <- gseKEGG(geneList     = geneList,
-               organism     = 'hsa',
-               minGSSize    = 120,
-               pvalueCutoff = 0.1,
-               verbose      = FALSE)
-
 
 ego5 <- gseGO(geneList     = geneList,
               OrgDb        = org.Hs.eg.db,
               ont          = "BP",
               nPerm        = 1000,
-              minGSSize    = 100,
+              minGSSize    = 4,
               maxGSSize    = 500,
-              pvalueCutoff = 0.05,
+              pvalueCutoff = 1,
               verbose      = FALSE)
 
 ego6 <- gseGO(geneList     = geneList,
               OrgDb        = org.Hs.eg.db,
               ont          = "MF",
               nPerm        = 1000,
-              minGSSize    = 100,
+              minGSSize    = 4,
               maxGSSize    = 500,
-              pvalueCutoff = 0.05,
+              pvalueCutoff = 1,
               verbose      = FALSE)
 
-  p = clusterProfiler::dotplot(kk, showCategory=30)
+## Wikipathways
+wp2gene <- read.gmt("~/liulab_home/data/pathways/wikipathways/wikipathways-20200710-gmt-Homo_sapiens.gmt")
+wp2gene <- wp2gene %>% tidyr::separate(ont, c("name","version","wpid","org"), "%")
+wpid2gene <- wp2gene %>% dplyr::select(wpid, gene) #TERM2GENE
+wpid2name <- wp2gene %>% dplyr::select(wpid, name) #TERM2NAME
+
+ewp <- GSEA(geneList.rev, minGSSize =2, TERM2GENE = wpid2gene, TERM2NAME = wpid2name)
+ehead(ewp)
+
+ewp.up <- GSEA(geneList, minGSSize =2, TERM2GENE = wpid2gene, TERM2NAME = wpid2name, pvalueCutoff = 1)
+head(ewp.up)
+
+p = gseaplot2(ewp, geneSetID = 1:5)
+
+  p = clusterProfiler::dotplot(ewp.up, showCategory=50)
+p = clusterProfiler::dotplot(ewp, showCategory=50)
+    
  dir.create("results/.figs/murad")
  ggsave(filename = "results/.figs/murad/pathway.pdf",p)
  kk <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,

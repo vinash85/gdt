@@ -954,6 +954,55 @@ yy = project.exp.mat[c("BTN3A1" ,"BTN2A1"),]
 aa = cor(t(xx), t(yy))
 
 ```
+```{r}
+plot.outliers.scatter =  function(avi.dt) {
+  require(ggrepel)
+  aa = fit.loess(avi.dt$V1, avi.dt$V2)
+  inx.pos = (avi.dt$V2 - aa$fitted) %>% order(decreasing=T) %>% 
+    .[1:40]
+  inx.neg = (aa$fitted- avi.dt$V2 ) %>% order(decreasing=T) %>% 
+    .[1:30]
+  # avi.dt.sub = avi.dt[inx]
+  avi.dt.sub = avi.dt[unique(c(
+    order(avi.dt$V1,decreasing=F)[1:30],
+    order(avi.dt$V2,decreasing=F)[1:30],
+    order(avi.dt$V1,decreasing=T)[1:40],
+    order(avi.dt$V2,decreasing=T)[1:40], 
+    inx.pos,
+    inx.neg
+  ))]
+  p.sc.volcano = ggplot(data=avi.dt, aes(x=V1, y= V2))  + 
+    geom_point(alpha=0.5) +
+    theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+    geom_text_repel(
+      data = avi.dt.sub,
+      aes(x = V1, y = V2, label = gene),    
+      size = 3,
+      box.padding = unit(0.35, "lines"),
+      point.padding = unit(0.3, "lines")
+    ) 
+  p.sc.volcano
+}
+# find.outliers <- function(x, y, limits = c(-Inf, Inf), ...) {
+#   lo <- loess.smooth(x, y
+#   fx <- approxfun(lo$x, lo$y * limits[1L])
+#   fy <- approxfun(lo$x, lo$y * limits[2L])
+# 
+#   which(y < fx(x) | y > fy(x))
+# }
+fit.loess <- function(x, y, loess.spn=0.3, ...) {
+	dt = data.table(x=x,y=y)
+  fit <- loess(
+      formula = y~ x,
+      data = dt,
+      span = loess.spn
+    )
+  fit
+}
+
+
+```
+
 ## Interaction in melanoma only
 ```{r}
 
@@ -995,6 +1044,14 @@ calculate.cox.interaction.tr = function(dtx){
 # .[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
 
 trg.alleles = grep("^TR[GD][VDJC]", rownames(project.exp.mat), value=T) 
+xx=setdiff(  grep("^TRGV", rownames(project.exp.mat),value=T), "TRGV9")
+project.skcm= rbind(project.skcm, 
+                      "TRDV2GV9" =colSums(project.skcm[c("TRDV2","TRGV9"),]),
+                      "TRGV9minus" =colSums(project.skcm[xx,]),
+                      "TRBV" =colSums(project.skcm[grep("^TRBV", rownames(project.exp.mat),value=T),])
+                     )
+trg.alleles = c("TRDV1", "TRDV2", "TRDV2GV9", "TRGV9", "TRGV9minus", "TRBV") 
+
 # c( c("TRDV1", "TRDV2", "TRGV1", "TRGV9", "TRGV6", "TRGV10", "TRGC1", "TRGC2") 
 
 trg.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){ 
@@ -1010,6 +1067,7 @@ trg.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){
     .[,gene:=rownames(project.skcm)]
     out 
 }) 
+
 names(trg.interaction.out.skcm) = trg.alleles
 # trg.interaction.skcm.dt = lapply(trg.interaction.out.skcm, function(tt){
 # tt%<>% data.table 
@@ -1103,7 +1161,69 @@ xx <- myCompareCluster(geneLists, fun="gseKEGG",
 p <-  dotplot.compareClusterResult(xx, by="enrichmentScore", font.size=8, showCategory=7) + theme(axis.text.x = element_text(angle = 45))
 ggsave(file="results/.figs/all.trgs.skcm.pathway.pdf", p, width=12, height=10)
 
+## Overlap with murad hits 
+trdv2vg9.interaction = trg.interaction.out.skcm$TRDV2GV9
+library(readxl)
+library(tidyr)
+library(readxl)
+crispr = data.table(read_xlsx("~/liulab_home/projects/gdt/data/Murad_Screen_Data.xlsx", sheet = 1))
+gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+crispr$ENTREZID = gene.eg.dt[match(crispr$id, gene.eg.dt$SYMBOL),]$ENTREZID
+crispr.overlap = crispr %>% 
+  .[,gene:=toupper(id)] %>% 
+  .[gene%in% toupper(crispr$id)]
+crispr.overlap$interaction.score = trdv2vg9.interaction[match(crispr.overlap$gene, gene)]$z
+# genes.overlap = intersect(crispr$id %>% toupper, trdv2vg9.interaction$gene %>% toupper)
+p =   ggplot(crispr.overlap, aes(x=interaction.score, y=`neg|lfc`)) + 
+  geom_point(alpha=0.5)
+
+crispr.overlap.sel = crispr.overlap[`neg|lfc` < -3 & interaction.score < -1.25]
+
+ kk <- clusterProfiler::enrichKEGG(gene = crispr.overlap.sel$ENTREZID,
+                                   universe = crispr.overlap$ENTREZID,
+                                   minGSSize = 4,
+                                    organism     = 'hsa',
+                                    pvalueCutoff = 0.05)
+ library(clusterProfiler)
+ 
+ 
+ kk <- clusterProfiler::enrichGO(gene = crispr.overlap.sel$ENTREZID, universe = crispr.overlap$ENTREZID,minGSSize = 4,OrgDb= org.Hs.eg.db, 
+                                 ont= "BP", pvalueCutoff = 0.05)
+dotplot(kk, showCategory=50)
+
+## Comparison between TRDV1 and TRDV2 
+TRBV.interaction = trg.interaction.out.skcm$TRBV
+TRDV2.interaction = trg.interaction.out.skcm$TRDV2
+TRDV2.interaction$TRBV.interactions = TRBV.interaction[match(TRDV2.interaction$gene, gene)]$z
+TRBV.TRDV2.interaction = TRDV2.interaction[,.(V1=TRBV.interactions, V2=z, gene=gene)]
+p = plot.outliers.scatter(TRBV.TRDV2.interaction)
+p1 = p + xlab("TRBV") + ylab("TRDV2") + theme_bw()
+gene.eg.dt = clusterProfiler::bitr(unique( TRBV.TRDV2.interaction$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+TRBV.TRDV2.interaction$ENTREZID = gene.eg.dt[match(TRBV.TRDV2.interaction$gene,gene.eg.dt$SYMBOL),]$ENTREZID
+TRBV.TRDV2.interaction = TRBV.TRDV2.interaction[!is.na(ENTREZID)]
+trdv.interaction.sel = TRBV.TRDV2.interaction[V1< -1.8 & V2>1.8]
+kk <- clusterProfiler::enrichGO(gene = trdv.interaction.sel$ENTREZID, universe = TRBV.TRDV2.interaction$ENTREZID,minGSSize = 4,OrgDb= org.Hs.eg.db, ont= "BP", pvalueCutoff = 0.05)
+
+dotplot(kk, showCategory=50)
+
+## plot specific examples of Kerantizing genes 
+
+out = dt.skcm 
+avi.dt = out %>%
+.[,TRGV9:=project.skcm["TRGV9",]] %>% 
+.[,TRGV9:=ifelse(TRGV9> median(TRGV9)," high", " low")] %>% 
+.[,ELF5:=as.numeric(project.skcm["ELF5",])] %>% 
+.[,ELF5:=ifelse(ELF5> median(ELF5),"ELF5 high", "ELF5 low")]
+
+fit1 <- survfit( Surv(Survival, Event) ~ ELF5, data = avi.dt)
+p = ggsurvplot_facet( fit1, avi.dt, facet.by = "TRGV9",  palette = "jco", pval = TRUE)
+
+fit1 <- survfit( Surv(Survival, Event) ~TRGV9 , data = avi.dt)
+p1 = ggsurvplot_facet( fit1, avi.dt, facet.by = "ELF5",  palette = "jco", pval = TRUE)
 ```
+
+
+
 ## Pathway enrichment
 ```{r}
 library(plyr)
@@ -1336,23 +1456,6 @@ ggsave(file="results/.figs/trgc1.gene.interaction.pdf", p, width=10, height=8)
 ```
 
 ```{r}
-find.outliers <- function(x, y, limits = c(-Inf, Inf), ...) {
-  lo <- loess.smooth(x, y
-  fx <- approxfun(lo$x, lo$y * limits[1L])
-  fy <- approxfun(lo$x, lo$y * limits[2L])
-
-  which(y < fx(x) | y > fy(x))
-}
-fit.loess <- function(x, y, loess.spn=0.3, ...) {
-	dt = data.table(x=x,y=y)
-  fit <- loess(
-      formula = y~ x,
-      data = dt,
-      span = loess.spn
-    )
-  fit
-}
-
 
 get.enrich = function(genes, universe,
 	organism     = 'hsa',

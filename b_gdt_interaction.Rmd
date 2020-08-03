@@ -1,0 +1,116 @@
+---
+title: "B cells"
+output: html_notebook
+---
+# Determine what B cells interacts with TRDV2
+Analyze Shipp's PBMC data to identify B-cell clusters that likely interacts with TRDV2. 
+B cells are cd3 negative 
+
+```{r}
+library(Seurat)
+library(magrittr)
+# lee.sco = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.sce.RDS")
+cd3.neg = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.neg.RDS")
+set.seed(12341)
+cd3.neg.sub = cd3.neg[,sample(ncol(cd3.neg), 10000)] 
+bcell.markers = c("MS4A1","CD22","CD70","CD79A","CD79B","CD9","CD19","MS4A1","CD27","PECAM1","CD38","CD81","PROM1","SDC1","CXCR4","TNFSF4","TNFRSF17","CD81","CD1D","CD9","CR1","CR2","IGHM","CD81","ITGAE","CD180","TNFRSF13C","FCRL4","MS4A1","CR1","CD22","FCER2","CD24","CD40","CD69","CD80","CD81","CD86","TNFRSF9","ICOSLG","PDCD1","IL21R","HLA-DRA","CD27","IGHG1") %>% unique 
+FeaturePlot(cd3.neg.sub, reduction = "umap", features= bcell.markers[1:20])  %>% print
+bcell.markers.sel = c("MS4A1", "CD19", "CD22", "CD79A", "IGHM", "IGHG1")
+FeaturePlot(cd3.neg.sub, reduction = "umap", features= bcell.markers.sel)  %>% print
+DimPlot(object = cd3.neg.sub, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() %>% print
+
+```
+## Subset B-cells
+
+```{r}
+library(avinash.scRNA)
+library(tidyr)
+library(dplyr)
+bcell.clusters  =c(18, 1, 23,30, 8, 21)
+bcells = cd3.neg[,cd3.neg$seurat_clusters %in% bcell.clusters]
+library(avinash.scRNA)
+bcells %<>% preprocessing.harmony.seurat
+saveRDS(file="../../results/lee.bcells.RDS", bcells)
+bcells = readRDS("../../results/lee.bcells.RDS")
+bcells.temp = bcells %>% FindClusters(resolution=1.0)
+DimPlot(object = bcells.temp, reduction = "tsne", label = TRUE, pt.size = 0.5) + NoLegend() %>% print
+sco.new.markers  =  bcells.temp %>% FindAllMarkers( only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top10 <- sco.new.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+ DoHeatmap(bcells.temp, features = top10$gene) + NoLegend()
+
+```
+
+## TRDV2 correlated genes
+```{r}
+grep("IGHV1", rownames(bcells), value = T)
+trdv2.cor.genes = c("TRBV12-4", "IGLV1-47", "IGHG2", "IGHD3-22", "IGHV7-34-1", "INSRR", "IGHV1OR15-1", "TRGJ2", "AC069079.1", "RNU6-154P", "IGKV5-2", "CDY23P", "HSPE1P12", "MIR4276", "CD177", "IGKV5-2", "CD177", "FRG2MP", "IGKV1-32", "AC121333.1", "RNU6-1102P", "AC121333.1", "LINC02534", "RN7SL238P", "LRRC15", "RNU6-376P", "AL512882.1", "IGHV7-40", "IGLV1-51", "IGLVI-70", "AL512356.3", "IGHD1-26", "IGHD3-16", "IGHV7-81", "SLC1A7", "IGHV7-27", "IGKV1-6", "", "IGHV7-81", "PODN", "EGFL6", "IGHV1-2", "IGHD5-12", "TRAV31", "", "COX5BP8", "RNU6-154", "COX5BP8") 
+
+trdv2.corgene.int = intersect( trdv2.cor.genes, rownames(bcells))
+FeaturePlot(bcells, reduction = "tsne", features= trdv2.corgene.int)  %>% print
+
+FeaturePlot(bcells, reduction = "tsne", features= grep("^IGLV1", rownames(bcells),value=T))  %>% print
+grep("^IGHG", rownames(bcells),value=T)
+bcells.temp = ScaleData(bcells, features = trdv2.corgene.int) 
+bcells.temp$trdv2.corgene.exp = bcells.temp@assays$RNA@scale.data %>% colMeans
+FeaturePlot(bcells.temp, reduction = "tsne", features= "trdv2.corgene.exp") 
+```
+
+
+```{r}
+VlnPlot(object = bcells.temp[, (bcells.temp$Treatment.Cycle == "C1D1") & (bcells.temp$response%in% c("CR", "PR", "PD"))], features = "trdv2.corgene.exp", split.by = "response", group.by = "seurat_clusters", pt.size = 0)
+VlnPlot(object = bcells.temp[, (bcells.temp$Treatment.Cycle == "C4D1") & (bcells.temp$response%in% c("CR", "PR", "PD"))], features = "trdv2.corgene.exp", split.by = "response", group.by = "seurat_clusters", pt.size = 0)
+```
+
+```{r}
+cd3.neg.sel  = ScaleData(cd3.neg, features = trdv2.corgene.int) 
+cd3.neg.sel$trdv2.corgene.exp = cd3.neg.sel@assays$RNA@scale.data[trdv2.corgene.int,] %>% colMeans
+FeaturePlot(cd3.neg.sel, reduction = "umap", features= "trdv2.corgene.exp") 
+```
+## Find sub-types of B-cells 
+```{r}
+library(ggplot2)
+library(data.table)
+cd2hugo = fread("~/liulab_home/data/single_cell/markers/cdgene2hugo.csv", header=T)
+cd2hugo = fread("~/liulab_home/data/pathways/hgnc.genenames.txt", header=T)
+cd2hugo[,`Previous symbols`:=strsplit(`Previous symbols`, split = ",")]
+cd2hugo[,`Alias symbols`:=strsplit(`Alias symbols`, split = ",")]
+convert.cd2hugo = function(genes, cd2hugo){
+  out.all = list()
+  for (gene in genes) {
+    out  = NULL
+    for (tt in cd2hugo) {
+      if(length(out)== 0){
+        # strsplit(tt,split = ",") %>% 
+        out = grep(pattern=paste("^",gene, "$", sep=""), tt, ignore.case = T)
+      }
+    }
+    out.all[[gene]] = cd2hugo$`Approved symbol`[out]
+  }
+  out.all
+  
+}
+convert.cd2hugo("CD368", cd2hugo )
+convert.cd2hugo("NCRNA00181", cd2hugo )
+bcell.markers.hugo = convert.cd2hugo(bcell.markers, cd2hugo)
+  # sapply(bcell.markers, convert.cd2hugo, cd2hugo=cd2hugo)
+p = DoHeatmap(bcells, features = bcell.markers )
+ggsave(file="../../results//lee.bcells.chenfei.pdf", p)
+```
+
+```{r}
+invitrogen.b.markers = list(
+pan=c("CD19", "CD20", "CD22", "CD70h", "CD79A", "CD79B"),
+follicular.surface=c("CD20", "CD21", "CD22", "CD27", "CD23h", "CD24", "CD40h", "CD45R", "CD69h", "CD80h", "CD81", "CD86h", "CD137", "CD275", "CD279", "CD360", "HLA-DR", "IgD", "IgM"),
+follicular.tf=c("Bcl-6", "EBF1", "FoxO1", "Ikaros", "Pax5"),
+Marginal.zone.surface=c("CD1d", "CD9", "CD21", "CD45R", "CD81", "CD103", "CD180", "CD268", "CD307d", "IgM"),
+Marginal.zone.Tf=c("EBF1", "Notch2", "Pax5"),
+Germinal.center.surface=c("IgA", "IgE", "IgG", "Surface", "CD45R", "CD81"),
+Germinal.center.tf=c("AID", "Bach2", "Bcl-6", "IRF8", "NF-kappaB", "Pax5"),
+Plasma.surface=c("IgA", "IgE", "IgG", "CD9", "CD19-", "CD20-", "CD27", "CD31", "CD38", "CD81", "CD138", "CXCR4", "CD252", "CD269"),
+Plasma.tf=c("BLIMP1", "IRF4", "XBP-1"),
+Memory.Surface=c("CD27", "IgG", "TLR1", "TLR2", "TLR6", "TLR7", "TLR10"),
+Memory.tf=c("CBF1", "Pax5", "Spi-B")
+)
+
+invitrogen.b.markers.hugo = sapply(invitrogen.b.markers, convert.cd2hugo, cd2hugo=cd2hugo)
+```
