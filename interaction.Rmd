@@ -1040,6 +1040,34 @@ fit.loess <- function(x, y, loess.spn=0.3, ...) {
 
 ```
 
+## Distribution of gamma delta alleles 
+-1. Sum of TRD 
+-2. Sum of TRG
+-3. Sum of TRDV etc. 
+-4. Individual genes 
+
+```{r}
+plot.geombox = function(avi.dt, variable, facet=NULL){
+	p = ggplot(avi.dt, aes(x=cancer.type, y=avi.dt[[variable]])) + 
+	geom_boxplot() +
+	geom_point(pch = 21, fill = "grey",
+		position = position_jitter(width = 0.5, height = 0)) +
+	theme_bw()
+	if(!is.null(facet)){
+		p = p + facet_wrap(~)
+	}
+	ggsave(filename="/tcga.gdt.scores.pdf", p, width=16, height=10)        
+}
+
+
+tcga.cor.gdt = tcga.cor.unique["T_cell:gamma-delta",]  
+avi.dt = data.table(gamma.delta.score=tcga.cor.gdt, cancer.type=tcga.dataset$cancertype)
+avi.dt.summ= avi.dt[,.(mean(gamma.delta.score, na.rm=T)), by=cancer.type][order(V1)]
+avi.dt[,cancer.type:=factor(cancer.type, levels=avi.dt.summ$cancer.type)]
+```
+
+```
+
 ## Interaction in melanoma only
 ```{r}
 
