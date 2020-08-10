@@ -1,0 +1,113 @@
+---
+title: "Analysis of ICB datasets"
+autoor: "avi"
+output: html_notebook
+---
+
+
+## Identify most variable genes.
+1. Surv genes
+2. DEG genes
+3. Markers of gdT
+
+```{r}
+icb.deg = readRDS("/homes6/asahu/liulab_home/data/immunotherapy-trials/all.bulk.rnaseq.deg.Rds")
+tcga.surv.genes = readRDS("~/liulab_home/data/tcga/tcga.cox.genes.Rds")
+singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
+surv.genes.curr= tcga.surv.genes$OS[order(P)[1:500]]$genes
+icb.genes.curr= icb.deg[order(P)[1:400]]$gene
+ ## "~/liulab_home/data/single_cell/markers/immune-cell-guide.pdf"
+gdt.markers = c("GMCSF", "GZMB", "IFNG", "IL4", "IL5", "IL17A", "PRF1", "TNFA", "CD3", "CD5", "CD16", "CD27", "CD28", "CD45RA", "CD56", "CD57", "CD62L", "CD69", "CD70", "CD107a", "CD314", "NKG2D", "TCRgd")
+gdt.markers.hugo = geneSynonym::humanSyno(gdt.markers,  caseSensitive = F) 
+gdt.markers.hugo %<>% unlist %>%  c(.,"CD3D", "CD3E", "PTPRC") 
+gdt.genes.sel = c(surv.genes.curr, icb.genes.curr, gdt.markers.hugo) %>% unique
+gdt.inx = which(singler.dataset$HumanPrimaryCellAtlasData$ref.se@colData$label.fine == "T_cell:gamma-delta")
+ref.exp = singler.dataset$HumanPrimaryCellAtlasData$norm.ref.se[,gdt.inx]
+ref.exp.sel = ref.exp[rownames(ref.exp) %in% gdt.genes.sel,] 
+```
+```{r}
+my.cor <- function(x,y, ...) {
+  rownames(x) %<>% toupper
+  rownames(y) %<>% toupper
+    common = intersect(rownames(x), rownames(y))
+    cor(x[common,], y[common,], ...)
+}
+
+icb.exp= fread("~/liulab_home/data/immunotherapy-trials/icb.v2/ICB/expression/Mariathasan2018_PDL1_Bladder_RNASeq_mUC")
+icb.exp.mat = icb.exp[,-1,with=F] %>% as.matrix %>%
+    set_rownames(toupper(icb.exp$`Hugo Symbol`)) %>% t() %>%
+  # set_colnames(toupper(colnames(icb.exp)[-1])) %>% 
+     scale(., center=T, scale=T) %>% t()
+
+# followup.curr = fread("~/liulab_home/data/immunotherapy-trials/icb.v2/ICB/follow_up//Mariathasan2018_PDL1_Bladder_RNASeq_mUC")
+genentech.env = local({load("/liulab/asahu/data/ssgsea/xiaoman/genentech.phenotype.RData");environment()})
+# matched.genes = intersect(gdt.genes.sel,rownames(icb.exp.mat))
+mat.signature.enrich = my.cor(icb.exp.mat, ref.exp.sel, method="spearman")
+gamma.delta.score = rowMeans(mat.signature.enrich)
+followup.curr = genentech.env$aa[colnames(icb.exp.mat),] %>% data.table
+```
+
+## Waterfall plot
+```{r}
+my.waterfallplot = function(dat, 
+                          x.variable = "gdT",
+                          variable = "treatment", title = NULL 
+                        ){
+  if(is.null(title))   title= sprintf("Waterfall plot for changes in %s scores", x.variable )
+  dat <- dat[order(y,decreasing=TRUE,na.last=NA),]
+  dat$x = 1:nrow(dat)
+  b <- ggplot(dat, aes(x=x, y=y, fill=dat[[variable]])) +
+    scale_fill_discrete(name=variable) + #scale_color_discrete(guide="none") +
+    labs(list(title = title, x = NULL, y = sprintf("Change from baseline in %s score", x.variable))) +
+    theme_classic() + 
+    theme(axis.line.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.title.y = element_text(face="bold",angle=90)) 
+  # +
+    # coord_cartesian(ylim = c(-100,100))
+   b <- b + geom_bar(stat="identity", width=0.7, position = position_dodge(width=0.4))
+  b
+}
+
+
+my.survival.waterfallplot = function(dat, 
+                          x.variable = "gdT",
+                          variable = "Event", title = NULL 
+                        ){
+  if(is.null(title))   title= sprintf("Waterfall plot for changes in %s scores", x.variable )
+  dat = dat[!is.na(Survival),]
+  dat <- dat[order(y, decreasing=TRUE),]
+  dat$x = 1:nrow(dat)
+  b <- ggplot(dat, aes(x=x, y=Survival, fill=dat[[variable]])) +
+    scale_fill_discrete(name=variable) + #scale_color_discrete(guide="none") +
+    labs(list(title = title, x = NULL, y = sprintf("Change from baseline in %s score", x.variable))) +
+    theme_classic() %+replace%
+    theme(axis.line.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.title.y = element_text(face="bold",angle=90)) 
+  # +
+    # coord_cartesian(ylim = c(-100,100))
+   b <- b + geom_bar(stat="identity", width=0.7, position = position_dodge(width=0.4))
+  b
+}
+```
+```{r}
+p = followup.curr[,.(response=`Best Confirmed Overall Response`, y=gamma.delta.score)] %>%
+  .[!(response=="NE")] %>% 
+  .[,response:=factor(response,levels = c("CR", "PR", "PD", "SD"))] %>% 
+my.waterfallplot(., variable = "response")
+ p = p +
+  scale_fill_manual(values=c("red4", "lightsalmon1", "grey90", "grey98"), name = "response") + 
+   xlab(element_blank()) + ylab("Gamma delta scores") 
+
+ 
+ ## Survival (does not work)
+ 
+ dt.curr = followup.curr[,.(Survival=os, Event=censOS, y=gamma.delta.score)] %>%
+   .[,Event:=as.factor(ifelse(Event, "Death", "Censored"))]
+ p = my.survival.waterfallplot(dt.curr)
+ p = p +
+  scale_fill_manual(values=c("red4", "lightsalmon1", "grey90", "grey98"), name = "response") + 
+   xlab(element_blank()) + ylab("Gamma delta scores") 
+ 
+```
+
+

@@ -156,6 +156,43 @@ ggsave(file="results/.figs/gdt.dyfn.pdf", p, width=16, height=10)
 		
 ```
 
+## Check high TRD high Fibroblast have high IL-17 and low IFNG
+```{r}
+
+dt.curr = colData(project.exp) %>% as.data.table %>%
+.[,.(days_to_death, days_to_last_follow_up, vital_status, sample, dataset=project_id)] %>% 
+.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
+surv.factors.skcm = dt.curr[dataset == "TCGA-SKCM",] %>% 
+  .[match(colnames(skcm.cor.out), sample)]
+exp.tcga.skcm = project.skcm[,colnames(skcm.cor.out)]
+
+surv.factors.skcm[,TRD.exp:=exp.tcga.skcm["TRGV9",]] %>% 
+.[,Fibroblasts:=skcm.cor.unique["Fibroblasts activated",]]
+surv.factors.skcm[,TRD.level:=ifelse(TRD.exp > mean(TRD.exp), "TRD-high", "TRD-low")] %>%
+.[,Fibroblast.level:=ifelse(Fibroblasts > mean(Fibroblasts), "Fibroblast-high", "Fibroblast-low")] 
+grp.1 = which(
+  (surv.factors.skcm$TRD.level =="TRD-high") & 
+  (surv.factors.skcm$Fibroblast.level =="Fibroblast-high")) 
+  
+grp.2 = which(
+  (surv.factors.skcm$TRD.level =="TRD-low") & 
+  (surv.factors.skcm$Fibroblast.level =="Fibroblast-high")) 
+
+wilcox.test(exp.tcga.skcm["IFNG",grp.1], exp.tcga.skcm["IFNG", grp.2], alternative = "greater")
+grep("IFNG", rownames(exp.tcga.skcm), value=T)
+ils = grep("IL17", rownames(exp.tcga.skcm), value=T)
+for (il in ils) {
+  print(il)
+print(wilcox.test(exp.tcga.skcm[il,grp.1], exp.tcga.skcm[il, grp.2], alternative = "less"))
+}
+
+```
+
+
+
+
 ## Download data from TCGAbiolinks 
 
 ```{r}

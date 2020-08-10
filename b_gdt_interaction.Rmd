@@ -46,13 +46,9 @@ grep("IGHV1", rownames(bcells), value = T)
 trdv2.cor.genes = c("TRBV12-4", "IGLV1-47", "IGHG2", "IGHD3-22", "IGHV7-34-1", "INSRR", "IGHV1OR15-1", "TRGJ2", "AC069079.1", "RNU6-154P", "IGKV5-2", "CDY23P", "HSPE1P12", "MIR4276", "CD177", "IGKV5-2", "CD177", "FRG2MP", "IGKV1-32", "AC121333.1", "RNU6-1102P", "AC121333.1", "LINC02534", "RN7SL238P", "LRRC15", "RNU6-376P", "AL512882.1", "IGHV7-40", "IGLV1-51", "IGLVI-70", "AL512356.3", "IGHD1-26", "IGHD3-16", "IGHV7-81", "SLC1A7", "IGHV7-27", "IGKV1-6", "", "IGHV7-81", "PODN", "EGFL6", "IGHV1-2", "IGHD5-12", "TRAV31", "", "COX5BP8", "RNU6-154", "COX5BP8") 
 
 trdv2.corgene.int = intersect( trdv2.cor.genes, rownames(bcells))
-FeaturePlot(bcells, reduction = "tsne", features= trdv2.corgene.int)  %>% print
+# FeaturePlot(bcells, reduction = "tsne", features= trdv2.corgene.int)  %>% print
 
-FeaturePlot(bcells, reduction = "tsne", features= grep("^IGLV1", rownames(bcells),value=T))  %>% print
-grep("^IGHG", rownames(bcells),value=T)
-bcells.temp = ScaleData(bcells, features = trdv2.corgene.int) 
-bcells.temp$trdv2.corgene.exp = bcells.temp@assays$RNA@scale.data %>% colMeans
-FeaturePlot(bcells.temp, reduction = "tsne", features= "trdv2.corgene.exp") 
+# FeaturePlot(bcells, reduction = "tsne", features= grep("^IGLV1", rownames(bcells),value=T))  %>% print
 ```
 
 
@@ -84,7 +80,11 @@ convert.cd2hugo = function(genes, cd2hugo){
         out = grep(pattern=paste("^",gene, "$", sep=""), tt, ignore.case = T)
       }
     }
-    out.all[[gene]] = cd2hugo$`Approved symbol`[out]
+    hugo.id =cd2hugo$`Approved symbol`[out]
+    hugo.id2 = geneSynonym::humanSyno(gene,  caseSensitive = F) %>% 
+      unlist %>% toupper %>%
+      intersect(cd2hugo$`Approved symbol`)
+    out.all[[gene]] = c(hugo.id, hugo.id2) %>% unique
   }
   out.all
   
@@ -99,18 +99,255 @@ ggsave(file="../../results//lee.bcells.chenfei.pdf", p)
 
 ```{r}
 invitrogen.b.markers = list(
-pan=c("CD19", "CD20", "CD22", "CD70h", "CD79A", "CD79B"),
-follicular.surface=c("CD20", "CD21", "CD22", "CD27", "CD23h", "CD24", "CD40h", "CD45R", "CD69h", "CD80h", "CD81", "CD86h", "CD137", "CD275", "CD279", "CD360", "HLA-DR", "IgD", "IgM"),
-follicular.tf=c("Bcl-6", "EBF1", "FoxO1", "Ikaros", "Pax5"),
+pan=c("CD19", "CD20", "CD22", "CD70", "CD79A", "CD79B"),
+follicular.surface=c("CD20", "CD21", "CD22", "CD27", "CD23", "CD24", "CD40", "CD45R", "CD69", "CD80", "CD81", "CD86", "CD137", "CD275", "CD279", "CD360", "HLADR", "IgHD", "IgHM"),
+follicular.tf=c("Bcl6", "EBF1", "FoxO1", "Ikaros", "Pax5"),
 Marginal.zone.surface=c("CD1d", "CD9", "CD21", "CD45R", "CD81", "CD103", "CD180", "CD268", "CD307d", "IgM"),
 Marginal.zone.Tf=c("EBF1", "Notch2", "Pax5"),
 Germinal.center.surface=c("IgA", "IgE", "IgG", "Surface", "CD45R", "CD81"),
-Germinal.center.tf=c("AID", "Bach2", "Bcl-6", "IRF8", "NF-kappaB", "Pax5"),
-Plasma.surface=c("IgA", "IgE", "IgG", "CD9", "CD19-", "CD20-", "CD27", "CD31", "CD38", "CD81", "CD138", "CXCR4", "CD252", "CD269"),
-Plasma.tf=c("BLIMP1", "IRF4", "XBP-1"),
+Germinal.center.tf=c("AID", "Bach2", "Bcl6", "IRF8", "NFkappaB", "Pax5"),
+Plasma.surface=c("IgA", "IgE", "IgG", "CD9", "CD19", "CD20", "CD27", "CD31", "CD38", "CD81", "CD138", "CXCR4", "CD252", "CD269"),
+Plasma.tf=c("BLIMP1", "IRF4", "XBP1"),
 Memory.Surface=c("CD27", "IgG", "TLR1", "TLR2", "TLR6", "TLR7", "TLR10"),
-Memory.tf=c("CBF1", "Pax5", "Spi-B")
+Memory.tf=c("CBF1", "Pax5", "SpiB")
 )
 
 invitrogen.b.markers.hugo = sapply(invitrogen.b.markers, convert.cd2hugo, cd2hugo=cd2hugo)
+invitrogen.b.markers.uniq = invitrogen.b.markers.hugo %>% unlist %>% unique()
 ```
+
+```{r}
+myplot.contour = function(x, y, z, cutoff = 0.1, fmla= as.formula(z ~1), interpolator="gam", grid.size=100, nbins=10, bw.scale=1){
+
+  library(ggplot2)
+  library(scales)
+  library(directlabels)
+  library(metR)
+  library(data.table)
+  dat = data.frame(x=x,y=y,z=z)
+  bw.scale.fn = function(x)  MASS::bandwidth.nrd(x) * bw.scale
+  h.scale = apply(dat,2,bw.scale.fn)
+  kd.out = MASS::kde2d(dat$x, dat$y, n=c(grid.size,grid.size), h=h.scale)
+
+  ran = range(c(kd.out$z))
+  cutoff.relax = ran[1] + (ran[2] - ran[1]) * cutoff/10 
+  cutoff = ran[1] + (ran[2] - ran[1]) * cutoff 
+  # seq(cutoff[1],cutoff[2], length.out=20)[3]
+  newdata = expand.grid(kd.out$x, kd.out$y) %>% 
+  set_colnames(c("x", "y")) %>% as.data.table 
+  
+  newdata$density=c(kd.out$z)
+
+  if(interpolator=="gam"){
+    predicted = interp.gam(dat, newdata)
+  }else if(interpolator=="kriged"){
+    predicted = interp.kriged(dat, newdata)
+  }else if(interpolator=="kriged.variogram"){
+    predicted = interp.kriged.variogram(dat, newdata, fmla=fmla)
+  }
+  # browser()
+  out = newdata %>% as.data.table %>%
+  .[,var1.pred:=predicted] %>% 
+  .[,var1.pred.round:=round(var1.pred, digit=3)] %>%
+  .[,var1.norm:=scale(var1.pred, scale=T, center=T)]
+
+  p1 = out[density > cutoff] %>%
+  ggplot(aes(x=x, y=y)) + geom_tile(aes(fill=var1.pred)) +
+   # coord_equal() +
+  scale_fill_gradient(low = "yellow", high="red") +
+  scale_x_continuous(labels=comma) + scale_y_continuous(labels=comma) +
+  theme_bw()
+
+  breaks = round(quantile(out$var1.pred, seq(0, 1, length.out=nbins)), 2)
+
+  p2 = out %>%
+  ggplot( aes(x=x, y=y)) + 
+  stat_contour(aes(z=var1.pred.round, colour = ..level..), bins = nbins) + 
+  scale_fill_gradient(low = "yellow", high="red") +
+  scale_x_continuous(labels=comma) + scale_y_continuous(labels=comma) +
+  stat_subset(aes(subset = density < cutoff), geom = "raster", 
+    fill = "#EBEBEB", alpha=0.85) +
+   # geom_text_contour(aes(z=var1.pred.round, color=NULL), bins = nbins, skip=2, size=1) +
+  theme_bw()
+  # p3 =  direct.label(p2, "bottom.pieces")
+
+  
+  p4= ggplot( out, aes(x, y, z = var1.norm)) +
+  geom_contour_fill(na.fill = TRUE, bins=nbins) +
+  geom_contour_tanaka(bins=nbins) +
+  scale_fill_divergent() +
+  # scale_x_longitude() +
+  # scale_y_latitude()   + 
+  stat_subset(aes(subset = density < cutoff), geom = "raster", 
+    fill = "#EBEBEB") 
+
+
+  list(predicted.dt = out, tile.plot = p1, contour.plot=p2,tanaka.plot=p4, cutoff=cutoff, cutoff.relax=cutoff.relax)
+}
+
+
+myContourDimPlot = function(
+  object,
+  features,
+  object.contour = NULL,
+  dims = c(1, 2),
+  cells = NULL,
+  cols = NULL,
+  pt.size = NULL,
+  reduction = NULL,
+  group.by = NULL,
+  split.by = NULL,
+  shape.by = NULL,
+  interpolator = "gam",
+  order = NULL,
+  label = FALSE,
+  label.size = 4,
+  slot = 'data',
+  repel = FALSE,
+  cells.highlight = NULL,
+  cols.highlight = '#DE2D26',
+  sizes.highlight = 1,
+  na.value = 'grey50',
+  combine = TRUE,
+  ncol = NULL,
+  ...
+  ) {
+  require(purrr)
+  if (length(x = dims) != 2) {
+    stop("'dims' must be a two-length vector")
+  }
+  p =DimPlot(object = object, reduction = reduction, label = TRUE, pt.size = 0.5) + NoLegend()
+  if(!is.null(object.contour)) object = object.contour
+  reduction <- reduction %||% DefaultDimReduc(object = object)
+  cells <- cells %||% colnames(x = object)
+  data <- Embeddings(object = object[[reduction]])[cells, dims]
+  data <- as.data.frame(x = data)
+  dims <- paste0(Key(object = object[[reduction]]), dims)
+
+  data <- FetchData(
+    object = object,
+    vars = c(dims, features),
+    cells = cells,
+    slot = slot
+    )
+
+  contour.out = myplot.contour(data[[dims[[1]]]], data[[dims[[2]]]], data[[features]], interpolator=interpolator,  cutoff=0.3, grid.size=100, nbins=20, bw.scale=0.6)
+  
+  layers = lapply(p$layers, function(tt) {
+    curr.class =  tt$data %>% class
+    if(curr.class=="waiver")
+      tt$data = p$data
+    tt
+  })
+
+  contour.out.curr = contour.out$predicted.dt
+  layers[[1]]$aes_params$alpha = .4
+  p1 =  ggplot()+
+  geom_contour_fill(data = contour.out.curr, aes(x, y, z=var1.norm), na.fill = TRUE, bins=20) +
+  geom_contour_tanaka(data = contour.out.curr, aes(x, y, z=var1.norm), bins=20) +
+  scale_fill_divergent() + layers + theme_bw()
+  list(p1, contour.out) 
+
+}
+
+
+
+```
+
+
+```{r}
+extract.region = function(contour.out.curr, sco, threshold){
+  library(raster)
+tsne.point = sco@reductions$tsne@cell.embeddings %>% as.data.frame %>% 
+  set_colnames(c("x", "y"))
+  rasterX <- rasterFromXYZ(contour.out.curr[,.(x,y,z=var1.norm)])
+  ## selection mask
+  rasterX[rasterX[]<=threshold,] <- NA
+  rasterX[rasterX[]>threshold,] <- 1
+  polyX50<-rasterToPolygons(rasterX, n=16, na.rm=T, digits=4, dissolve=F)
+  
+  sp.points <- SpatialPoints(tsne.point)
+  # x.inY <- intersect(sp.points, polyX50)
+  out = over(sp.points, polyX50)
+  ifelse(is.na(out), 0,1)
+  }
+
+```
+
+```{r}
+ bcells.temp %<>% FindVariableFeatures(selection.method = "vst", nfeatures = 2000)
+features.curr = intersect(invitrogen.b.markers.uniq, rownames(bcells.temp))
+
+# bcells.temp %<>% ScaleData(features = unique(c(features.curr, bcells.temp@assays$RNA@var.features)))
+features.all = c(features.curr, bcells.temp@assays$RNA@var.features, trdv2.corgene.int) %>% unique
+bcells.temp = ScaleData(bcells, features = features.all) 
+bcells.temp$trdv2.corgene.exp = bcells.temp@assays$RNA@scale.data[trdv2.corgene.int,] %>% colMeans
+FeaturePlot(bcells.temp, reduction = "tsne", features= "trdv2.corgene.exp") 
+out = myContourDimPlot(object = bcells.temp, object.contour = bcells.temp,  features="trdv2.corgene.exp", reduction = "tsne", label = TRUE, pt.size = 0.5, interpolator="kriged.variogram") 
+
+contour.out.curr = out[[2]]$predicted.dt
+p1 =  ggplot()+
+  geom_contour_fill(data = contour.out.curr, aes(x, y, z=var1.norm), na.fill = TRUE, bins=20) +
+  geom_contour_tanaka(data = contour.out.curr, aes(x, y, z=var1.norm), bins=20) +
+  scale_fill_divergent()  + theme_bw()
+## selecting point within certain area
+
+bcells.temp$trdv2.selected= extract.region(contour.out.curr, bcells.temp, threshold = 2.5)
+FeaturePlot(bcells.temp, reduction = "tsne", features= "trdv2.selected") 
+
+bcells.temp$trdv2.selected %<>% as.factor
+Idents(bcells.temp) <- bcells.temp$trdv2.selected
+
+sco.markers = FindAllMarkers(bcells.temp,  only.pos = F)
+sco.markers.dt = sco.markers %>% as.data.table %>% 
+  .[,padj:=p_val_adj+1E-300] %>% 
+  .[cluster==1]
+library(EnhancedVolcano)
+p = EnhancedVolcano::EnhancedVolcano(sco.markers.dt,
+	lab = sco.markers.dt$gene,
+	x = 'avg_logFC',
+	y = 'padj',
+	pCutoff = 1E-150,
+	FCcutoff = .28,
+	# pointSize = c(ifelse(lm22.enrich$padj< 5E-2, 4, 3)),
+	labSize = 4.0,
+	legend=c('NS','Log (base 2) fold-change','Adj.P value',
+		'Adj.P value & Log (base 2) fold-change'),
+	legendPosition = 'right',
+	# legendLabSize = 8,
+	# legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+
+
+```
+```{r}
+sco.new.markers  =  bcells.temp %>% FindAllMarkers( only.pos = TRUE, features = features.curr, min.pct = 0.2, logfc.threshold = 0.3)
+top5 <- sco.new.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+p= DoHeatmap(bcells.temp, features = unique(top5$gene)) + NoLegend()
+
+ggsave("/liulab/asahu/projects/gdt/results//lee.bcells.chenfei.pdf")
+
+ p = StackedVlnPlot(bcells.temp, features = unique(top5$gene))
+ ggsave("/liulab/asahu/projects/gdt/results//lee.bcells.invitrogen.pdf", p, width=16, height=16)
+ 
+ btypes = strsplit(names(invitrogen.b.markers.hugo), split="\\.") %>% 
+   sapply(., function(tt) tt[[1]][1]) %>% unique
+ for (btype in btypes) {
+   sel = grep(btype, names(invitrogen.b.markers.hugo))
+   markers.curr = invitrogen.b.markers.hugo[sel] %>% unlist %>% unique %>% 
+     intersect(rownames(bcells.temp))
+   p = StackedVlnPlot(bcells.temp, features = markers.curr)
+   ggsave(sprintf("/liulab/asahu/projects/gdt/results//lee.bcells.invitrogen.%s.pdf", btype)
+          , p, width=16, height=16)
+ }
+ 
+ p = DimPlot(bcells.temp, label = TRUE, pt.size = 0.5, reduction = "tsne") + NoLegend()
+
+ 
+ 
+```
+

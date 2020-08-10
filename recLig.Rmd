@@ -1,0 +1,236 @@
+## receptor lignads were dowloaded from https://fantom.gsc.riken.jp/5/suppl/Ramilowski_et_al_2015/
+
+## Correlate, complement, correlate  
+```{r}
+cd3.pos = readRDS("~/liulab_home/data/single_cell/Lee_data/lee.seurat.cd3.pretreatment.harmony.RDS")
+recLig = fread("~/liulab_home/projects/gdt/data/PairsLigRec.txt")
+recLig.all = unique(c(recLig$Ligand.ApprovedSymbol, recLig$Receptor.ApprovedSymbol))
+recLig.curr = intersect(recLig.all, rownames(cd3.pos))
+genes.curr = c(grep("TRDV", rownames(cd3.pos), value=T),
+               grep("TRGV", rownames(cd3.pos), value=T),
+               recLig.curr,
+               ) %>% unique
+cd3.pos %<>% ScaleData(features=genes.curr)
+cd3.neg %<>% ScaleData(features=genes.curr)
+exp.trd = cd3.pos@assays$RNA@scale.data[, cd3.pos$seurat_clusters %in% c(3,11,18,12)]
+trd.cor = WGCNA::corAndPvalue(
+  exp.trd[c("TRDV1", "TRDV2"),] %>% t, 
+  exp.trd[recLig.curr,] %>% t, 
+  method="spearman"
+  )
+
+avi.dt = data.table(cor = trd.cor$cor["TRDV1", ], 
+                    p=trd.cor$p["TRDV1", ], 
+                    gene=recLig.curr) %>% 
+  .[order(p)]
+
+library(EnhancedVolcano)
+p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+	lab = avi.dt$gene,
+	x = 'cor',
+	y = 'p',
+	pCutoff = 1E-130,
+	FCcutoff = .2,
+	# pointSize = c(ifelse(lm22.enrich$padj< 5E-2, 4, 3)),
+	labSize = 4.0,
+	legend=c('NS','Log (base 2) fold-change','Adj.P value',
+		'Adj.P value & Log (base 2) fold-change'),
+	legendPosition = 'right',
+	# legendLabSize = 8,
+	# legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.18,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+
+
+# 
+# %>% t %>% 
+#   as.data.table %>% 
+#   .[,gene:=recLig.curr]
+
+```
+
+## Complement function 
+```{r}
+recLig.paired = rbind(
+  recLig[,.(x=Ligand.ApprovedSymbol, y=Receptor.ApprovedSymbol)],
+  recLig[,.(x=Receptor.ApprovedSymbol, y=Ligand.ApprovedSymbol)]
+  ) %>% unique %>% 
+  .[ (x%in% rownames(cd3.pos)) & (y%in% rownames(cd3.pos)), ]
+recLig.paired$z = 1
+library(reshape2)
+recLig.mat = acast(recLig.paired, x~y, value.var = "z")
+recLig.mat[is.na(recLig.mat)] = 0
+recLig.mat = recLig.mat[,rownames(recLig.mat)]
+library(Matrix)
+cd3.neg.recLig.exp = cd3.neg@assays$RNA@scale.data[rownames(recLig.mat),] 
+complement.exp = recLig.mat %*% cd3.neg.recLig.exp
+```
+
+## Correlate
+
+```{r}
+avi.dt.sub = avi.dt[!is.na(p)][gene %in% rownames(complement.exp)]
+trd.cor.sub = trd.cor$cor[,avi.dt.sub$gene] %>% t
+complement.exp.sub = complement.exp[avi.dt.sub$gene,]
+trd.cor = WGCNA::cor(
+  trd.cor.sub, 
+  complement.exp.sub, 
+  method="spearman"
+  )
+cd3.neg$recLig.TRDV1 = trd.cor[1,]
+cd3.neg$recLig.TRDV2 = trd.cor[2,]
+
+ p = FeaturePlot(cd3.neg, reduction = "umap", features=c("recLig.TRDV1", "recLig.TRDV2")) 
+
+```
+
+
+```{r}
+bcells.temp %<>% ScaleData(features=genes.curr)
+bcells.temp.recLig.exp = bcells.temp@assays$RNA@scale.data[rownames(recLig.mat),] 
+complement.exp = recLig.mat %*% bcells.temp.recLig.exp
+complement.exp.sub = complement.exp[avi.dt.sub$gene,]
+trd.cor = WGCNA::cor(
+  trd.cor.sub, 
+  complement.exp.sub, 
+  method="spearman"
+  )
+bcells.temp$recLig.TRDV1 = trd.cor[1,]
+bcells.temp$recLig.TRDV2 = trd.cor[2,]
+
+ p = FeaturePlot(bcells.temp, reduction = "tsne", features=c("recLig.TRDV1", "recLig.TRDV2")) 
+```
+
+## Using data from cellphenodb : https://github.com/Teichlab/cellphonedb-data
+Data is downloaded at ~/liulab_home/softwares/cellphonedb-dat
+1. Map 
+2. Find minimum expression of complexes
+3. find complement
+4. correlate or check expression 
+5. Validate with known interactions
+
+```{r}
+complexes = fread("~/liulab_home/softwares/cellphonedb-data/data/complex_input.csv")
+genesinp = fread("~/liulab_home/softwares/cellphonedb-data/data/gene_input.csv")
+proteins = fread("~/liulab_home/softwares/cellphonedb-data/data/protein_input.csv")
+interactions = fread("~/liulab_home/softwares/cellphonedb-data/data/interaction_input.csv")
+aa = setdiff(interactions$partner_a , c(complexes$complex_name, genesinp$gene_name, genesinp$uniprot))
+bb = setdiff(interactions$partner_b , c(complexes$complex_name, genesinp$gene_name, genesinp$uniprot))
+## 2. 
+subunits = c(interactions$partner_a, interactions$partner_b) %>% unique
+find.hugo = function(subunit){
+  if(subunit %in% genesinp$gene_name){
+    out = subunit
+  }else if(subunit %in% genesinp$uniprot){
+    out = genesinp[uniprot==subunit]$gene_name
+  }else{
+    uniprot.curr= complexes[complex_name==subunit] %>% 
+      .[,2:5,with=F] %>% unlist %>% c %>% 
+      .[!is.na(.)]
+    # uniprot.curr = uniprot.curr[!is.na(uniprot.curr)]
+    out = genesinp[uniprot %in% uniprot.curr]$gene_name
+    
+  }
+  out
+}
+find.min.expression = function(subunits, expression.mat){
+  agg.expression = list()
+  for (subunit in subunits) {
+    hugo.curr = find.hugo(subunit) %>% 
+      intersect(rownames(expression.mat))
+    exp.curr = expression.mat[hugo.curr, ]
+    if(length(hugo.curr) > 1){
+      exp.curr %<>% apply(., 2, FUN= "prod")
+    }
+    if(length(hugo.curr)==0)
+      exp.curr =rep(NA, nrow(expression.mat))
+    agg.expression[[subunit]] = exp.curr
+  } 
+  agg.expression %>% do.call(cbind,.) %>% 
+    scale(.,)
+}
+
+cd3.pos.subunit = find.min.expression(subunits, expression.mat = cd3.pos@assays$RNA@counts)
+cd3.neg.subunit = find.min.expression(subunits, expression.mat = cd3.neg@assays$RNA@counts)
+
+## 3. Find complement 
+find.partners =  function(interaction.partners) {
+  ifelse(interaction.partners %in% interactions$partner_a, interactions$partner_b,
+         ifelse(interaction.partners %in% interactions$partner_b, interactions$partner_a, NA))
+}
+subunits.partners = find.partners(subunits)
+
+
+inx.sel =  which(cd3.pos$seurat_clusters %in% c(3,11,18,12))
+trd.cor = WGCNA::corAndPvalue(
+  cd3.pos@assays$RNA@counts[c("TRDV1", "TRDV2"), inx.sel] %>% t, 
+cd3.pos.subunit[inx.sel, ], 
+  method="spearman"
+  )
+
+avi.dt = data.table(cor = trd.cor$cor["TRDV2", ], 
+                    p=trd.cor$p["TRDV2", ], 
+                    protein=colnames(trd.cor$cor), 
+                    protein.partner=subunits.partners 
+                    ) %>% 
+  .[order(p)]
+avi.dt$gene= genesinp[match(avi.dt$protein, uniprot)]$gene_name
+avi.dt[,gene:=ifelse(is.na(gene), protein, gene)]
+library(EnhancedVolcano)
+p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+	lab = avi.dt$gene,
+	x = 'cor',
+	y = 'p',
+	pCutoff = 1E-130,
+	FCcutoff = .2,
+	# pointSize = c(ifelse(lm22.enrich$padj< 5E-2, 4, 3)),
+	labSize = 4.0,
+	legend=c('NS','Log (base 2) fold-change','Adj.P value',
+		'Adj.P value & Log (base 2) fold-change'),
+	legendPosition = 'right',
+	# legendLabSize = 8,
+	# legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.18,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+
+
+avi.dt.sel = avi.dt[cor > 0.3]
+cd3.pos$TRDV2.interaction = cd3.pos.subunit[,avi.dt.sel$protein.partner] %>% rowMeans(na.rm = T)
+cd3.pos$TRDV2.interaction.q = ifelse(cd3.pos$TRDV2.interaction > 4, 4,cd3.pos$TRDV2.interaction)
+p1 = FeaturePlot(cd3.pos, reduction = "umap", features="TRDV2.interaction.q") 
+cd3.neg$TRDV2.interaction = cd3.neg.subunit[,avi.dt.sel$protein.partner] %>% rowMeans(na.rm=T)
+cd3.neg$TRDV2.interaction.q = ifelse(cd3.neg$TRDV2.interaction > 4, 4,cd3.neg$TRDV2.interaction)
+p2 = FeaturePlot(cd3.neg, reduction = "umap", features=c("TRDV2.interaction.q", "ITGAE"))
+bcells.temp$TRDV2.interaction = cd3.neg$TRDV2.interaction[match(colnames(bcells.temp), colnames(cd3.neg))]
+bcells.temp$TRDV2.interaction.q = ifelse(bcells.temp$TRDV2.interaction > 4, 4,bcells.temp$TRDV2.interaction)
+p3 = FeaturePlot(bcells.temp, reduction = "tsne", features="TRDV2.interaction.q")
+
+
+sel.inx = sample(ncol(cd3.pos), 10000)
+cd3.pos.complement.cor= WGCNA::cor(
+  cd3.pos@assays$RNA@counts[,sel.inx]%>% t, 
+cd3.pos$TRDV2.interaction.q[sel.inx], 
+  method="spearman"
+  )
+
+sel.inx = sample(ncol(cd3.neg), 10000)
+cd3.neg.complement.cor= WGCNA::cor(
+  cd3.neg@assays$RNA@counts[,sel.inx]%>% t, 
+cd3.neg$TRDV2.interaction.q[sel.inx], 
+  method="spearman"
+  )
+
+partners.curr = sapply(avi.dt.sel$protein.partner , find.hugo) %>% unlist 
+setdiff(rownames(cd3.neg)[order(abs(cd3.neg.complement.cor),decreasing = T)[1:50]], partners.curr)
+cd3.neg.complement.cor[rownames(cd3.neg)=="ITGAE"]
+
+cd3.neg.complement.cor
+```
+
+
