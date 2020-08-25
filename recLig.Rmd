@@ -153,17 +153,20 @@ find.min.expression = function(subunits, expression.mat){
     scale(.,)
 }
 
-cd3.pos.subunit = find.min.expression(subunits, expression.mat = cd3.pos@assays$RNA@counts)
-cd3.neg.subunit = find.min.expression(subunits, expression.mat = cd3.neg@assays$RNA@counts)
-
-## 3. Find complement 
 find.partners =  function(interaction.partners) {
   ifelse(interaction.partners %in% interactions$partner_a, interactions$partner_b,
          ifelse(interaction.partners %in% interactions$partner_b, interactions$partner_a, NA))
 }
 subunits.partners = find.partners(subunits)
 
+```
 
+
+```{r}
+cd3.pos.subunit = find.min.expression(subunits, expression.mat = cd3.pos@assays$RNA@counts)
+cd3.neg.subunit = find.min.expression(subunits, expression.mat = cd3.neg@assays$RNA@counts)
+
+## 3. Find complement 
 inx.sel =  which(cd3.pos$seurat_clusters %in% c(3,11,18,12))
 trd.cor = WGCNA::corAndPvalue(
   cd3.pos@assays$RNA@counts[c("TRDV1", "TRDV2"), inx.sel] %>% t, 
@@ -230,7 +233,134 @@ partners.curr = sapply(avi.dt.sel$protein.partner , find.hugo) %>% unlist
 setdiff(rownames(cd3.neg)[order(abs(cd3.neg.complement.cor),decreasing = T)[1:50]], partners.curr)
 cd3.neg.complement.cor[rownames(cd3.neg)=="ITGAE"]
 
-cd3.neg.complement.cor
+```
+
+```{r}
+get.SingleR.annotation.psuedobulk = function(sco) {
+	require(SingleR)
+  clusts.uniq = unique(sco$seurat_clusters) %>% sort
+  psuedo.exp.mat = sapply(clusts.uniq, function(clust.uniq) sco@assays$RNA@data[,sco$seurat_clusters == clust.uniq] %>%rowSums,simplify = F) %>% 
+    do.call(cbind,.) 
+  singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS") 
+  
+  message("SingleR label main annotations")
+  label.main = sapply(names(singler.dataset), function(ii){
+    ref.data = singler.dataset[[ii]]$ref.se
+    SingleR(test = psuedo.exp.mat, ref = ref.data, labels = ref.data$label.main)
+  }, USE.NAMES =T)
+  message("SingleR label fine annotations")
+  label.fine = sapply(names(singler.dataset), function(ii){
+    ref.data = singler.dataset[[ii]]$ref.se
+    SingleR(test = psuedo.exp.mat, ref = ref.data, labels = ref.data$label.fine)
+  }, USE.NAMES =T)
+  
+  list(
+    label.main = label.main, 
+    label.fine = label.fine)
+}
+```
+
+
+## identify a dataset with fibroblast 
+Analyze a dataset wtih fibroblast -- SKCM
+Then analyze for receptor ligand interactions
+
+```{r}
+library(Matrix)
+# GSE115978= readRDS("~/liulab_home/data/single_cell/GSE115978/SKCM_GSE115978_aPD1_CCA_res.rds")
+# GSE120575= readRDS("~/liulab_home/data/single_cell/GSE120575/GSE120575_human_aPD1aCTLA4_res.rds")
+sco= readRDS("/avi/cwang/projects/DATA/SCRNAseq/Data_cancer/SKCM_GSE123139/SKCM_GSE123139_res.rds")
+sco = sco$RNA
+sco %<>% RunTSNE(reduction = "pca", dims = 1:50)
+Idents(sco) = sco$assign.curated
+DimPlot(sco,reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() 
+
+
+sco.subunit = find.min.expression(subunits, expression.mat = sco@assays$RNA@counts)
+sco.subunit = sco.subunit[,!is.na(sco.subunit[1,])]
+trgd.alleles = grep("TR[DG][VDJC]", rownames(sco), value=T)
+trgd.alleles.exp = colSums(sco@assays$RNA@counts[trgd.alleles,]) %>% log1p()
+sco$trgd.alleles.exp = unlist(trgd.alleles.exp)
+FeaturePlot(sco, reduction = "umap", features = "trgd.alleles.exp")
+# FeaturePlot(sco, reduction = "umap", features = trgd.alleles[1:9])
+
+features.curr = c("trgd.alleles.exp", "TRDC", "TRGC1", "TRGC2", "CD3E", "CD8A", "GNLY", "NKG7", "PRF1", "GZMB",  "GZMK", "GZMH")
+FeaturePlot(sco, reduction = "umap", features = features.curr)
+## singler annotation 
+singler.annot = get.SingleR.annotation.psuedobulk(sco)
+
+curr.annot = sco$seurat_clusters
+lvl.annot = singler.annot$label.main$HumanPrimaryCellAtlasData$pruned.labels 
+lvl.annot[is.na(lvl.annot)] = "other"
+levels(curr.annot) = lvl.annot
+Idents(sco) = curr.annot
+DimPlot(sco,reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() 
+Idents(sco) = sco$seurat_clusters
+DimPlot(sco,reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() 
+```
+
+```{r}
+plot.trdg.cor <- function(allele) {
+  
+  avi.dt = data.table(cor = trd.cor$cor[allele, ], 
+                      p=trd.cor$p[allele, ], 
+                      protein=colnames(trd.cor$cor), 
+                      protein.partner=subunits.partners[match(colnames(trd.cor$cor),subunits)] 
+  ) %>% 
+    .[order(p)]
+  avi.dt[,cor:=ifelse(is.na(cor),0,cor)]
+  avi.dt[,p:=ifelse(is.na(p),1,p)]
+  avi.dt$gene= genesinp[match(avi.dt$protein, uniprot)]$gene_name
+  avi.dt[,gene:=ifelse(is.na(gene), protein, gene)]
+  library(EnhancedVolcano)
+  p1 = EnhancedVolcano::EnhancedVolcano(avi.dt,
+                                       lab = avi.dt$gene,
+                                       x = 'cor',
+                                       y = 'p',
+                                       pCutoff = 1E-30,
+                                       FCcutoff = .075,
+                                       title = allele,
+                                       subtitle = "Receptor ligands",
+                                       # pointSize = c(ifelse(lm22.enrich$padj< 5E-2, 4, 3)),
+                                       labSize = 4.0,
+                                       legend=c('NS','Log (base 2) fold-change','Adj.P value',
+                                                'Adj.P value & Log (base 2) fold-change'),
+                                       legendPosition = 'right',
+                                       # legendLabSize = 8,
+                                       # legendIconSize = 4.0,
+                                       drawConnectors = TRUE,
+                                       widthConnectors = 0.18,
+                                       colAlpha = 0.8,
+                                       colConnectors = 'grey30'
+  )
+  
+  
+  avi.dt.sel = avi.dt[cor > 0.075]
+  na.partner.sel = avi.dt$protein.partner[(!(avi.dt$protein.partner %in% rownames(sco.subunit)))]
+  sco.subunit.ext = matrix(NA, ncol = length(na.partner.sel), nrow=nrow(sco.subunit)) %>% 
+    set_colnames(na.partner.sel) %>% cbind(sco.subunit,.)
+  
+  sco$TRDV2.interaction = sco.subunit.ext[,avi.dt.sel$protein.partner] %>% rowMeans(na.rm = T)
+  sco$TRDV2.interaction.q = ifelse(sco$TRDV2.interaction > 4, 4,sco$TRDV2.interaction)
+  p2 = FeaturePlot(sco, reduction = "umap", features="TRDV2.interaction.q") 
+  
+  complement.exp = sco.subunit.ext[,avi.dt$protein.partner]
+  complement.cor= WGCNA::cor(avi.dt$cor,t(complement.exp),  use = 'pairwise.complete.obs')
+  sco$allele.complement.cor = complement.cor[1,]
+  p3 = FeaturePlot(sco, reduction = "umap", features="allele.complement.cor") 
+  list(p1=p1, p2=p2, p3=p3, complement.cor)
+}
+inx.sel =  which(sco$seurat_clusters %in% c(0,1,3,6,8,9,10,14,20)) 
+trd.cor = WGCNA::corAndPvalue(
+  sco@assays$RNA@data[c("TRDC", "TRGC1", "TRGC2"), inx.sel] %>% t, 
+sco.subunit[inx.sel, ], 
+  method="spearman"
+  )
+out = plot.trdg.cor("TRGC2")
+out = plot.trdg.cor("TRDC")
+
+sco$allele.complement.cor = ifelse(out[[4]][1,] > 0.1, 1, 0)
+p3 = FeaturePlot(sco, reduction = "umap", features="allele.complement.cor") 
 ```
 
 

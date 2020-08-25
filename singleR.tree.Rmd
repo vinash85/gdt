@@ -1,0 +1,302 @@
+---
+title: "Create tree structure of singleR references"
+output: html_notebook
+header-includes:
+   - \usepackage[colorinlistoftodos]{todonotes}
+   - \hypersetup{colorlinks=true,linkcolor=blue!30!black}
+   - \geometry{rmargin=1.5in} 
+---
+
+
+## Test two methods of differential expression 
+1. Tree based
+2. Current annotation vs. every other annotation 
+
+## Tree Based
+1. Hierarchical clustering of psuedo-bulk at fine and main level
+2. For each node in the tree perform differential expression analysis using limma
+3. Check if read count from RNA-seq are available and deg using deseq2
+
+```{r}
+library(SingleCellExperiment)
+library(SingleR)
+singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
+ref.data = singler.dataset$HumanPrimaryCellAtlasData
+# ref.data <-  SingleR::MonacoImmuneData()
+col.dat = colData(ref.data$ref.se) %>% as.data.table %>% 
+  .[,label.fine:=as.factor(label.fine)]  %>% 
+  .[,label.main:=as.factor(label.main)]
+create.psuedobulk <- function(exp.mat, labels) {
+  dt1 = data.table(V1=labels)
+  one.hot = mltools::one_hot(dt1) %>% as.matrix
+  one.hot %>% colMeans %>% 
+    sweep(one.hot,., MARGIN = 2, FUN = "/")
+  out = exp.mat %*% one.hot
+  out %>% set_colnames(gsub("V1_", colnames(one.hot), replacement = ""))
+}
+ref.psuedo.main = create.psuedobulk(assay(ref.data$ref.se), col.dat$label.main)
+d = 1 -cor(ref.psuedo.main, method = "spearman")
+hc1 <- hclust(dist(d), method = "complete" )
+plot(hc1, cex = 0.6, hang = -1, main="HumanPrimaryCellAtlas main")
+ref.psuedo.fine = create.psuedobulk(assay(ref.data$ref.se), col.dat$label.fine)
+d = 1 -cor(ref.psuedo.fine, method = "spearman")
+hc1 <- hclust(dist(d), method = "complete" )
+plot(hc1, cex = 0.6, hang = -1, main="HbumanPrimaryCellAtlas fine")
+```
+2. For each node in the tree perform differential expression analysis using limma
+```{r}
+find.variable.genes = function(exp.curr,
+                                   selection.method = "vst",
+  loess.span = 0.3,
+  clip.max = 'auto',
+  mean.function = FastExpMean,
+  dispersion.function = FastLogVMR,
+  num.bin = 20,
+  binning.method = "equal_width",
+  nfeatures = 2000,
+   mean.cutoff = c(0.1, 8),
+  dispersion.cutoff = c(1, Inf),
+  verbose = TRUE,
+  ...
+  ) {
+   hvf.info <- Seurat::FindVariableFeatures(
+    object = exp.curr,
+    selection.method = selection.method,
+    loess.span = loess.span,
+    clip.max = clip.max,
+    mean.function = mean.function,
+    dispersion.function = dispersion.function,
+    num.bin = num.bin,
+    binning.method = binning.method,
+    verbose = verbose
+  )
+   
+  hvf.info <- hvf.info[which(x = hvf.info[, 1, drop = TRUE] != 0), ]
+  if (selection.method == "vst") {
+    hvf.info <- hvf.info[order(hvf.info$vst.variance.standardized, decreasing = TRUE), , drop = FALSE]
+  } else {
+    hvf.info <- hvf.info[order(hvf.info$mvp.dispersion, decreasing = TRUE), , drop = FALSE]
+  }
+  selection.method <- switch(
+    EXPR = selection.method,
+    'mvp' = 'mean.var.plot',
+    'disp' = 'dispersion',
+    selection.method
+  )
+  top.features <- switch(
+    EXPR = selection.method,
+    'mean.var.plot' = {
+      means.use <- (hvf.info[, 1] > mean.cutoff[1]) & (hvf.info[, 1] < mean.cutoff[2])
+      dispersions.use <- (hvf.info[, 3] > dispersion.cutoff[1]) & (hvf.info[, 3] < dispersion.cutoff[2])
+      rownames(x = hvf.info)[which(x = means.use & dispersions.use)]
+    },
+    'dispersion' = head(x = rownames(x = hvf.info), n = nfeatures),
+    'vst' = head(x = rownames(x = hvf.info), n = nfeatures),
+    stop("Unkown selection method: ", selection.method)
+  )
+  top.features
+}
+
+
+mydeg <- function(exp.curr, groups, use.log=FALSE, num.var.genes =2000) {
+  require(Matrix)
+  require(dplyr)
+  require(limma)
+ 
+  genes.sel = find.variable.genes(exp.curr, nfeatures = num.var.genes) 
+  exp.curr.sub = exp.curr[rownames(exp.curr)%in%  genes.sel,]
+  # dge <- DGEList(counts=expression.mat)
+  # logCPM <- cpm(dge, log=TRUE, prior.count=3)
+  if(use.log) logCPM = log1p(exp.curr.sub)
+  design <- model.matrix(~ 0+factor(groups))
+  colnames(design) <- c("group1", "group2")
+  contrast.matrix <- makeContrasts(group2-group1, levels=design)
+  fit <- lmFit(exp.curr.sub, design = design)
+  fit2 <- contrasts.fit(fit, contrast.matrix)
+  fit <- eBayes(fit2)
+  deg =  topTable(fit, coef=1, 2000)
+  # browser()
+  out = deg %>% data.table %>% 
+    .[,gene:=rownames(deg)]
+  out
+}
+ 
+    
+
+#' Get differential expression in reference dataset tree. 
+#'
+#' @param exp.all Expression matrix of all sample (genes x samples)
+#' @param tree tree of hclust object
+#' @param labels Annotation of samples (columns) of exp.all 
+#'
+#' @return list with two elements 1. Differential expression in the tree internal nodes 2. leaf.child : leaves children of each internal node  
+#' @export
+#'
+#' @examples
+create.ref.tree.deg  <- function(exp.all, tree, labels, ncores = 32) {
+  # tree$merge
+  stopifnot(length(labels)==ncol(exp.all))
+  degs = leaf.child = list()
+  groups.ls = list()
+  # exp.all = assay(object)
+  for (parent in seq(nrow(tree$merge))) {
+    parent.chr = as.character(parent)
+    childs = tree$merge[parent,]
+    groups = rep(NA, ncol(exp.all))
+    for (child.inx in seq_along(childs)) {
+      child = childs[child.inx]
+      child.chr = as.character(child)
+      if(child < 0){
+        child = -1 * child
+        leaf.child[[child.chr]] = tree$labels[child]
+      }
+      leaf.child[[parent.chr]] = unlist(c( leaf.child[[parent.chr]], leaf.child[[child.chr]]))
+      groups[labels %in% leaf.child[[child.chr]]] = child.inx-1
+    }
+    groups.ls[[parent.chr]] = groups
+  }
+require(doMC)
+require(foreach)
+registerDoMC(cores = ncores)
+degs = foreach( parent = seq(nrow(tree$merge)), .inorder=T) %dopar%{
+    parent.chr = as.character(parent)
+    groups = groups.ls[[parent.chr]]
+    na.inx = which(!is.na(groups))
+    exp.curr = exp.all[,na.inx]
+    groups.curr = groups[na.inx]
+    out = tryCatch({
+      mydeg(exp.curr, groups.curr)
+    }, 
+    error = function(e) NA)
+    return( out )
+}
+ names(degs) = names(groups.ls)
+  list(degs=degs, leaf.child=leaf.child)
+}
+# aa = Seurat::FindVariableFeatures(assay(ref.data$ref.se))
+# aa = find.varialable.genes(assay(ref.data$ref.se)[1:10000,1:10])
+```
+
+```{r}
+out = create.ref.tree.deg(exp.all=assay(ref.data$ref.se), tree=hc1, labels=col.dat$label.fine)
+```
+
+## Check degs
+```{r}
+
+ll = hc1$labels[-hc1$merge[1, ] %>% c()] 
+grp1 = which(col.dat$label.fine ==ll[1])
+grp2 = which(col.dat$label.fine ==ll[2])
+exp.all = assay(ref.data$ref.se)
+ 
+MA <- normalizeWithinArrays(exp.curr)
+R = rowMeans(exp.curr[,1:5]) %>% log2
+G = rowMeans(exp.curr[,6:10]) %>% log2
+M =  R - G
+A = (R+G)/2
+plot(A,M)
+
+ groups = rep(NA, ncol(exp.all))
+ groups[col.dat$label.fine ==ll[1]]  =1 
+ groups[col.dat$label.fine ==ll[2]]  =2 
+  na.inx = which(!is.na(groups))
+    exp.curr = exp.all[,na.inx]
+    groups.curr = groups[na.inx]
+     design <- model.matrix(~ 0+factor(groups.curr))
+     colnames(design) <- c("group1", "group2")
+     contrast.matrix <- makeContrasts(group2-group1, levels=design)
+    fit <- lmFit(exp.curr, design = design)
+    fit2 <- contrasts.fit(fit, contrast.matrix)
+    fit <- eBayes(fit2)
+  deg =  topTable(fit, coef=1, adjust="BH", number = 2000)
+   temp= mydeg(exp.curr, groups.curr, num.var.genes = 2000)
+ 
+```
+## Analyze gamma delta t-cells 
+```{r}
+
+icb.genes = readRDS("~/liulab_home/data/immunotherapy-trials/all.bulk.rnaseq.deg.Rds")
+icb.genes.combined = icb.genes[type=="combined",]
+
+curr.deg = out$degs[["83"]]
+curr.deg.sel = curr.deg[adj.P.Val < .01]
+genes.sel = intersect(curr.deg.sel$gene, icb.genes.combined$gene)
+cor.test(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg.sel[match(genes.sel, gene)]$t)
+plot(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg.sel[match(genes.sel, gene)]$t)
+```
+## Gerber correlation
+```{r}
+gerber.correlation2 = function(x, y, threshold.pos = 0.5, threshold.neg=0.5, psuedo.count=0) {
+    nx <- ncol(x)
+    ny <- ncol(y)
+    nperiods <- nrow(x)
+
+  
+  
+    standard.deviation.x <- apply(x, 2, sd, na.rm = T)
+    standard.deviation.y <- apply(y, 2, sd, na.rm = T)
+    thresholdx.pos <- threshold.pos * standard.deviation.x
+    thresholdy.pos <- threshold.pos * standard.deviation.y
+    thresholdx.neg <- threshold.neg * standard.deviation.x
+    thresholdy.neg <- threshold.neg * standard.deviation.y
+  
+    correlation <- matrix(1, nx, ny, dimnames=list(colnames(x), colnames(y)))
+    for (i in 1:nx)
+        for (j in 1:ny) {
+            pos <- sum((x[,i] >= thresholdx.pos[i] & y[,j] >= thresholdy.pos[j]) |
+                       (x[,i] <= -thresholdx.pos[i] & y[,j] <= -thresholdy.pos[j]), na.rm = T) + psuedo.count
+      
+            neg <- sum((x[,i] >= thresholdx.neg[i] & y[,j] <= -thresholdy.neg[j]) |
+                       (x[,i] <= -thresholdx.neg[i] & y[,j] >= thresholdy.neg[j]), na.rm = T) + psuedo.count
+      
+            correlation[i,j] <- (pos - neg) / (pos + neg)
+        }
+    correlation  
+}
+
+gerber.correlation.plot = function(x, y) {
+    
+    maxNorder = . %>% apply(.,2, order) %>% 
+        apply(.,1,max) %>% sort
+    
+    pos.pos = cbind(x,y) %>% maxNorder
+    pos.neg = cbind(x,-y) %>% maxNorder
+    neg.pos = cbind(-x,y) %>% maxNorder
+    neg.neg = cbind(-x,-y) %>% maxNorder
+    
+    thrs = c(pos.pos, pos.neg, neg.pos, neg.neg) %>% unique %>% sort
+    gb.cors = sapply(thrs, function(thr){
+      pos = sum(pos.pos <= thr) + sum(neg.neg <= thr)
+      neg = sum(pos.neg <= thr) + sum(neg.pos <= thr)
+      (pos - neg) / (pos + neg)
+    }
+      )
+    list(thrs = thrs, gb.cors=gb.cors)
+}
+```
+
+
+```{r}
+inx = 154
+grep("Pre-B", hc1$labels)
+
+# which(hc1$merge[,1] == -127)
+which(hc1$merge[,1] == inx)
+which(hc1$merge[,2] == inx)
+uu = hc1$merge[inx,]
+try({
+  
+uu = ifelse(uu<0, -uu, NA) 
+hc1$labels[uu]
+})
+curr.deg = out$degs[[as.character(inx)]]
+genes.sel = intersect(curr.deg$gene, icb.genes.combined$gene)
+cor.test(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg[match(genes.sel, gene)]$t)
+plot(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg[match(genes.sel, gene)]$t)
+gb.out = gerber.correlation.plot(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg[match(genes.sel, gene)]$t)
+
+# gerber.correlation.plot(1:10, 1:10)
+plot(gb.out$thrs, gb.out$gb.cors)
+sum(gb.out$gb.cors[1:50])
+```
+

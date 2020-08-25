@@ -916,3 +916,30 @@ plot(px)
 dev.off()
 
 ```
+
+
+## Assocation between different immmune infiltrations
+```{r}
+tcga.singler = readRDS("~/liulab_home/data/tcga/tcga.singler.Rds")
+project.exp = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
+
+aa = WGCNA::corAndPvalue(x=tcga.singler["T_cell:gamma-delta",], t(tcga.singler), method="spearman")
+avi.dt = data.table(cor=aa$cor[1,], p=aa$p[1,], label=rownames(tcga.singler))
+p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+	lab = rownames(tcga.singler),
+	x =  aa$cor[1,],
+	y =  aa$p[1,],
+	pCutoff = 1E-200,
+	FCcutoff = .6,
+	labSize = 4.0,
+	legend=c('NS','Log (base 2) fold-change','Adj.P value',
+		'Adj.P value & Log (base 2) fold-change'),
+	legendPosition = 'right',
+	drawConnectors = TRUE,
+	widthConnectors = 0.18,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+
+```
+

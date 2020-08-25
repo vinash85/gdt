@@ -1041,32 +1041,52 @@ fit.loess <- function(x, y, loess.spn=0.3, ...) {
 ```
 
 ## Distribution of gamma delta alleles 
--1. Sum of TRD 
--2. Sum of TRG
--3. Sum of TRDV etc. 
--4. Individual genes 
+<!-- -1. Sum of TRD  -->
+<!-- -2. Sum of TRG -->
+<!-- -3. Sum of TRDV etc.  -->
+<!-- -4. Individual genes  -->
 
 ```{r}
-plot.geombox = function(avi.dt, variable, facet=NULL){
-	p = ggplot(avi.dt, aes(x=cancer.type, y=avi.dt[[variable]])) + 
-	geom_boxplot() +
-	geom_point(pch = 21, fill = "grey",
-		position = position_jitter(width = 0.5, height = 0)) +
+library(tidyverse)
+logNormalize <- function(counts, scale.factor=10000,
+                                   use.log= TRUE) {
+  colsum = colSums(counts) 
+  out = t(counts)/colsum * scale.factor 
+  if(use.log) out %<>% log1p
+  t(out)
+}
+plot.geombox = function(exp.mat, cancertypes, variable, facet=NULL){
+  # if(nrow(exp.mat) >1) facet = 
+  avi.dt = exp.mat %>% t %>% 
+    set_rownames(cancertypes) %>% melt %>% data.table()
+  setnames(avi.dt, 1, "cancer.type")
+  avi.dt.summ= avi.dt[,.(mean(value, na.rm=T)), by=cancer.type][order(V1)]
+  avi.dt[,cancer.type:=factor(cancer.type, levels=avi.dt.summ$cancer.type)]
+	p = ggplot(avi.dt, aes(x=cancer.type, y=value)) + 
+	geom_boxplot(outlier.shape = NA) +
 	theme_bw()
-	if(!is.null(facet)){
-		p = p + facet_wrap(~)
+	if(ncol(exp.mat) >1) {
+		p = p + facet_wrap(~Var2,scales = "free")
 	}
-	ggsave(filename="/tcga.gdt.scores.pdf", p, width=16, height=10)        
+	p = p + theme(axis.text.x = element_text(angle = 90))
+	ggsave(filename=sprintf("/liulab/asahu/projects/gdt/results/distribution/%s.pdf",variable), p, width=16, height=10) 
+	p
 }
 
+project.exp.tpm = logNormalize(assay(project.exp))
+project.exp.tpm %<>% set_rownames(rowData(project.exp)$external_gene_name)
 
-tcga.cor.gdt = tcga.cor.unique["T_cell:gamma-delta",]  
-avi.dt = data.table(gamma.delta.score=tcga.cor.gdt, cancer.type=tcga.dataset$cancertype)
-avi.dt.summ= avi.dt[,.(mean(gamma.delta.score, na.rm=T)), by=cancer.type][order(V1)]
-avi.dt[,cancer.type:=factor(cancer.type, levels=avi.dt.summ$cancer.type)]
+vars = c("TRDV", "TRGV", "TRD[VDJC]", "TRG[VDJC]")
+vars = c("TRAV")
+for (Var in vars) {
+  trg.alleles = grep(Var, rownames(project.exp.mat), value=T)
+exp.mat = project.exp.tpm[trg.alleles[1:10],]
+  p = plot.geombox(exp.mat, cancertype=dt.curr$dataset, variable = Var)
+}
+
+	 # p + facet_wrap(~Var2) + theme(axis.text.x = element_text(angle = 90))
 ```
 
-```
 
 ## Interaction in melanoma only
 ```{r}

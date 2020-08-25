@@ -1,0 +1,24 @@
+---
+title: "LISA analysis"
+output: html_notebook
+---
+
+## Survival genes
+```{r}
+surv.genes = readRDS("~/liulab_home/data/tcga/tcga.cox.genes.Rds")
+neg.risk.genes = surv.genes$OS[order(z)]$genes[1:100]
+write.table(file="~/temp.txt", neg.risk.genes, quote = F, row.names = F, col.names = F)
+pos.risk.genes = surv.genes$OS[order(z,decreasing = T)]$genes[1:100]
+write.table(file="~/temp2.txt", pos.risk.genes, quote = F, row.names = F, col.names = F)
+```
+
+## ICB genes
+```{r}
+icb.genes = readRDS("~/liulab_home/data/immunotherapy-trials/all.bulk.rnaseq.deg.Rds")
+icb.genes.combined = icb.genes[type=="combined",]
+pos.icb.genes = icb.genes.combined[deg.effect > 0][order(P)]$gene[1:100]
+write.table(file="~/temp1.txt",pos.icb.genes, quote = F, row.names = F, col.names = F)
+neg.icb.genes = icb.genes.combined[deg.effect < 0][order(P)]$gene[1:100]
+write.table(file="~/temp3.txt",neg.icb.genes, quote = F, row.names = F, col.names = F)
+```
+
