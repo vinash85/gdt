@@ -1,0 +1,47 @@
+---
+title: "4T1 experiment"
+output: html_notebook
+---
+
+## Analysis on data from Aug 27 
+
+```{r}
+library(data.table)
+library(magrittr)
+library(ggpubr)
+dat = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = 3,skip = 1) %>% data.table 
+dat$groups = rep(c("811 + PD1", "vehicle + PD1", "811 + isotype", "vehicle + isotype"), each=10)
+dat$groups = factor(dat$groups, levels=c( "vehicle + isotype", "811 + isotype", "vehicle + PD1", "811 + PD1"))
+
+
+my_comparisons <- list( c("vehicle + isotype", "811 + isotype"), c("vehicle + isotype", "vehicle + PD1"), c("vehicle + PD1", "811 + PD1") )
+p <- ggboxplot(dat, x = "groups", y = "Volume",
+          color = "groups", palette = "jco",
+          add = "jitter") + 
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons)
+print(p)
+p
+```
+
+```{r}
+dat0 = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = 2,skip = 1) %>% data.table 
+dat0$groups = rep(c("811 + PD1", "vehicle + PD1", "811 + isotype", "vehicle + isotype"), each=10)
+dat0$groups = factor(dat$groups, levels=c( "vehicle + isotype", "811 + isotype", "vehicle + PD1", "811 + PD1"))
+dat$time=8
+dat0$time  = 6
+avi.dt = rbind(dat0[,.(groups, Volume, time)], dat[,.(groups, Volume, time)])
+df.summary2 <- avi.dt %>%
+  group_by(groups, time) %>%
+  summarise( se = sd(Volume)/sqrt(10), Volume = mean(Volume))
+
+p = ggplot(df.summary2, aes(time, Volume)) +
+  geom_line(aes(color = groups, group = groups))+
+  geom_point()+
+  geom_errorbar(
+    aes(ymin = Volume-se, ymax = Volume+se, group = groups),
+     width = 0.2
+    ) + theme_bw()
+
+p
+```
+

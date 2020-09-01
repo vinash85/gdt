@@ -23,6 +23,7 @@ library(SingleR)
 singler.dataset = readRDS("~/liulab_home/data/single_cell/singleR.dataset.RDS")
 ref.data = singler.dataset$HumanPrimaryCellAtlasData
 # ref.data <-  SingleR::MonacoImmuneData()
+# ref.data = singler.dataset$MonacoImmuneData
 col.dat = colData(ref.data$ref.se) %>% as.data.table %>% 
   .[,label.fine:=as.factor(label.fine)]  %>% 
   .[,label.main:=as.factor(label.main)]
@@ -41,7 +42,7 @@ plot(hc1, cex = 0.6, hang = -1, main="HumanPrimaryCellAtlas main")
 ref.psuedo.fine = create.psuedobulk(assay(ref.data$ref.se), col.dat$label.fine)
 d = 1 -cor(ref.psuedo.fine, method = "spearman")
 hc1 <- hclust(dist(d), method = "complete" )
-plot(hc1, cex = 0.6, hang = -1, main="HbumanPrimaryCellAtlas fine")
+plot(hc1, cex = 0.6, hang = -1, main="HumanPrimaryCellAtlas fine")
 ```
 2. For each node in the tree perform differential expression analysis using limma
 ```{r}
@@ -298,5 +299,59 @@ gb.out = gerber.correlation.plot(icb.genes.combined[match(genes.sel, gene)]$deg.
 # gerber.correlation.plot(1:10, 1:10)
 plot(gb.out$thrs, gb.out$gb.cors)
 sum(gb.out$gb.cors[1:50])
+```
+
+## Plot spearman correlation
+```{r}
+cor.outs = out.sel = list()
+for (xx in seq(out$degs) ) {
+    uu = NA
+    cor.out.temp = list("p.value"=NA, 'estimate'=NA)
+ try(
+  {  
+    uu1 = out$degs[[xx]]
+    uu = uu1[adj.P.Val<0.1] 
+    if(nrow(uu) <20) 
+     uu = uu1[P.value<1E-3]
+    
+    uu %<>% .[order(P.Value)]
+    if(nrow(uu) > 100) uu = uu[1:100]
+    curr.deg = uu
+    genes.sel = intersect(curr.deg$gene, icb.genes.combined$gene)
+    cor.out = cor.test(icb.genes.combined[match(genes.sel, gene)]$deg.effect, curr.deg[match(genes.sel, gene)]$t, method="spearman")
+    cor.out.temp = cor.out[c("p.value", 'estimate')]
+  })
+  out.sel[[xx]] = uu
+  cor.outs[[xx]] = unlist(cor.out.temp)
+}
+
+cor.outs.dt =cor.outs %>% do.call(rbind,.) %>% 
+  cbind(.,hc1$merge) %>% 
+  set_colnames(c("p.value", 'estimate', "inx1", "inx2")) %>%
+  data.table %>% 
+  .[,lab:=seq(.N)] %>% 
+  .[,p.adj:=p.adjust(p.value, method = "BH")]%>%
+  .[order(abs(estimate),decreasing = T)]
+  
+lab.curr = list()
+  for(ii in seq(nrow(cor.outs.dt))) {
+    temp = cor.outs.dt[ii,]
+    lab1 =ifelse(temp$inx1< 0 , hc1$labels[-temp$inx1], temp$inx1)
+    lab2 =ifelse(temp$inx2< 0 , hc1$labels[-temp$inx2], temp$inx2)
+     lab.curr[[ii]] = paste(lab1,lab2, sep=",")
+  }
+cor.outs.dt$lab.curr = lab.curr %>% unlist
+library(clustree)
+#> Loading required package: ggraph
+#> Loading required package: ggplot2
+data("nba_clusts")
+
+aa = load("~/liulab_home/nba_clusts.rda")
+nba_clusts.rda
+library(pvclust)
+data(lung) # 916 
+result <- pvclust(lung[1:100, 1:10], method.dist="cor", 
+                  method.hclust="average", nboot=10)
+plot(result)
 ```
 

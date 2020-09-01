@@ -28,7 +28,6 @@ gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType=
 ## TCGA survival analysis 
 
 ```{r}
-
 library(coxme)
 library(data.table)
 library(magrittr)
@@ -45,17 +44,38 @@ calculate.cox.interaction = function(dtx){
 	},
 	error=  function(e) rep(NA,6)
 	)
-
 }
+calculate.cox.interaction.tr = function(dtx){
+    tryCatch(
+    {
+        dtx = dtx[!is.na(gene)]
+        aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
+      summary 
+    	xx = aa$coefficient
+        xx["gene:trg",]
+    },
+    error=  function(e) rep(NA,5),
+    warning = function(e) rep(NA,5)
+    )
+}
+```
+
+
+```{r}
+
 
 project.exp = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
 library(SummarizedExperiment)
-
 skcm.inx = which(colData(project.exp)$project_id == "TCGA-SKCM")
 project.exp.skcm = project.exp[,skcm.inx] 
+
 project.exp.mat = assay(project.exp.skcm) %>%
-set_rownames(rowData(project.exp.skcm)$external_gene_name) %>% t %>% 
- scale(., scale=T, center=T) %>% t 
+set_rownames(rowData(project.exp.skcm)$external_gene_name) 
+
+project.mat.libsize = project.exp.mat %>% 
+ colMeans
+
+project.exp.mat %<>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
 colnames(project.exp.mat) %<>% substring(.,1,16)
 project.skcm = project.exp.mat
 
@@ -134,19 +154,7 @@ pdf("results/.figs/murad/cor.trg.pdf", width=16, height=8)
 corrplot(trg.crispr.cor$cor, method="square")
 dev.off()
 
-calculate.cox.interaction.tr = function(dtx){
-    tryCatch(
-    {
-        dtx = dtx[!is.na(gene)]
-        aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
-      summary 
-    	xx = aa$coefficient
-        xx["gene:trg",]
-    },
-    error=  function(e) rep(NA,5),
-    warning = function(e) rep(NA,5)
-    )
-}
+
 
 crispr.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){ 
     dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
@@ -329,5 +337,115 @@ p = clusterProfiler::dotplot(ewp, showCategory=50)
   p = clusterProfiler::dotplot(kk, showCategory=30)
  ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
  
+```
+
+## 
+It would be super helpful if you could do your analysis looking at survival differences across all cancer types and the one ICB cohort with enough patients where you look at interactions between each of these genes and TRD/G genes. 
+```{r}
+
+crispr.genes =  data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/2020-0817.Murad_Top_Hits.xlsx", sheet = 1))
+gene.order = crispr.genes$id
+gene.order = ifelse(gene.order=="GLTSCR1", "BICRA", gene.order)
+
+project.exp.mat = assay(project.exp) %>%
+set_rownames(rowData(project.exp)$external_gene_name) 
+
+project.mat.libsize = project.exp.mat %>% 
+ colMeans
+
+project.exp.mat %<>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
+colnames(project.exp.mat) %<>% substring(.,1,16)
+
+temp = c("TRDV2", "TRGV9")
+trg.alleles = grep("^TR[GD][VC]",rownames(project.exp.mat), value=T) %>% sort
+
+dt.curr = colData(project.exp) %>% as.data.table %>%
+.[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
+all.genes = c(trg.alleles, gene.order) %>% unique
+crispr.interaction.out.cancertypes = crispr.interaction.mats = list()
+cancer.types = unique(dt.curr$dataset)
+for (cancer.type in cancer.types) {
+  print(sprintf("processing %s ... ", cancer.type))
+  cancertype.inx = which(dt.curr$dataset==cancer.type)
+  project.cancertype = project.exp.mat[all.genes,cancertype.inx] %>% t %>% 
+  scale(., scale=T, center=F) %>% t
+  dt.cancertype = dt.curr[dataset==cancer.type]
+  
+  crispr.interaction.out.cancertype = lapply(trg.alleles, function(trg.allele){ 
+    dt.cancertype[,trg:=project.cancertype[trg.allele,]]
+    out = mclapply(gene.order, function(ii) {
+      dt.cancertype[,gene:=project.cancertype[ii,]]%>%
+        calculate.cox.interaction.tr
+    }, mc.cores = 16) %>% 
+      do.call(rbind, .) %>%
+      data.table %>% 
+      set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+      .[,gene:=gene.order]
+    out 
+  }) 
+  names(crispr.interaction.out.cancertype) = trg.alleles
+  
+  crispr.interaction.mat = lapply(crispr.interaction.out.cancertype, function(tt) {
+    ifelse(tt$P<0.03, tt$z, 0)
+  } )%>% do.call(rbind, .) %>% 
+    set_colnames(gene.order)
+  crispr.interaction.mats[[cancer.type]] = crispr.interaction.mat
+  crispr.interaction.out.cancertypes[[cancer.type]] = crispr.interaction.out.cancertype
+}
+
+crispr.interaction.mats2 = lapply(names(crispr.interaction.mats), function(tt){
+  tt1 = gsub("TCGA-", tt, replacement = "")
+  crispr.interaction.mats[[tt]] %>% 
+    set_rownames(paste(tt1, rownames(crispr.interaction.mats[[tt]])))
+} ) %>% do.call(rbind,.)
+
+
+sel = rowMeans(is.na(crispr.interaction.mats2) | (crispr.interaction.mats2==0)) < 1
+crispr.interaction.mats2 = crispr.interaction.mats2[sel,]
+pdf("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.trg.pdf", width=17, height=8)
+corrplot::corrplot(t(crispr.interaction.mats2), is.corr = FALSE, method = "square", tl.cex = 0.45)
+dev.off()
+
+crispr.interaction.out.cancertypes2 = lapply(names(crispr.interaction.out.cancertypes), function(tt) {
+  zz = crispr.interaction.out.cancertypes[[tt]]
+  lapply(names(zz), function(uu) {
+    aa = crispr.interaction.out.cancertypes[[tt]][[uu]]
+    aa[,cancertype:=gsub("TCGA-", tt, replacement = "")][,trdg:=uu]
+  }) %>% do.call(rbind,.) 
+}) %>% do.call(rbind,.) 
+crispr.interaction.out.cancertypes2[,lab:=paste(gene,trdg, cancertype, sep=",")]
+crispr.interaction.out.cancertypes2[,estimate2:=ifelse(P<0.05, estimate, ifelse(abs(estimate) < 1, estimate, 0))]
+crispr.interaction.out.cancertypes2[,estimate2:=ifelse(abs(estimate2)<2.5, estimate2, sign(estimate2)*2.5)]
+
+  
+library(EnhancedVolcano)
+p = EnhancedVolcano(crispr.interaction.out.cancertypes2,
+	lab = crispr.interaction.out.cancertypes2$lab,
+	x = 'estimate2',
+	y = 'P',
+	pCutoff = 2E-3,
+	FCcutoff = 0.1,
+	# pointSize = c(ifelse(crispr.cox.out$padj <  .1, 3, 2)),
+	labSize = 2.0,
+	legend=c('NS','Estimate','P value',
+		'P value & Estimate'),
+	legendPosition = 'bottom',
+	legendLabSize = 8,
+	legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	# xlim = c(-.5, .5),
+	ylim = c(0, 5),
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+ggsave("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.volcano.pdf", width=16, height=8)
+
+crispr.interaction.out.cancertypes2 = crispr.interaction.out.cancertypes2[order(P)]
+write.table(x = crispr.interaction.out.cancertypes2, file="/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.txt", sep="\t", row.names = F, col.names = T, quote = F)
+
 ```
 
