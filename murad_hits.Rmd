@@ -10,19 +10,19 @@ library(tidyr)
 crispr = data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/Murad_Screen Hits.xlsx", sheet = 1))
 
 gene.eg.dt = clusterProfiler::bitr(unique(crispr$id), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
- kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
-                                    organism     = 'hsa',
-                                    pvalueCutoff = 0.05)
-  p = clusterProfiler::dotplot(kk, showCategory=30)
- dir.create("results/.figs/murad")
- ggsave(filename = "results/.figs/murad/pathway.pdf",p)
- kk <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
- 	 OrgDb    = org.Hs.eg.db,
-               ont      = "BP",
-                                    pvalueCutoff = 0.05)
-  p = clusterProfiler::dotplot(kk, showCategory=30)
- ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
- 
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk, showCategory=30)
+dir.create("results/.figs/murad")
+ggsave(filename = "results/.figs/murad/pathway.pdf",p)
+kk <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "BP",
+                                pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk, showCategory=30)
+ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
+
 ```
 
 ## TCGA survival analysis 
@@ -36,27 +36,27 @@ library(survival)
 library(survminer)
 
 calculate.cox.interaction = function(dtx){
-	tryCatch(
-	{
-		dtx = dtx[!is.na(gene)]
-		aa =  coxph(Surv(Survival, Event) ~ gene + cell.type + gene*cell.type, dtx)
-		summary(aa)$coefficients[,c(1,5)] %>% t%>% c
-	},
-	error=  function(e) rep(NA,6)
-	)
+  tryCatch(
+    {
+      dtx = dtx[!is.na(gene)]
+      aa =  coxph(Surv(Survival, Event) ~ gene + cell.type + gene*cell.type, dtx)
+      summary(aa)$coefficients[,c(1,5)] %>% t%>% c
+    },
+    error=  function(e) rep(NA,6)
+  )
 }
 calculate.cox.interaction.tr = function(dtx){
-    tryCatch(
+  tryCatch(
     {
-        dtx = dtx[!is.na(gene)]
-        aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
-      summary 
-    	xx = aa$coefficient
-        xx["gene:trg",]
+      dtx = dtx[!is.na(gene)]
+      aa =  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
+        summary 
+      xx = aa$coefficient
+      xx["gene:trg",]
     },
     error=  function(e) rep(NA,5),
     warning = function(e) rep(NA,5)
-    )
+  )
 }
 ```
 
@@ -69,77 +69,78 @@ library(SummarizedExperiment)
 skcm.inx = which(colData(project.exp)$project_id == "TCGA-SKCM")
 project.exp.skcm = project.exp[,skcm.inx] 
 
+
 project.exp.mat = assay(project.exp.skcm) %>%
-set_rownames(rowData(project.exp.skcm)$external_gene_name) 
+  set_rownames(rowData(project.exp.skcm)$external_gene_name) 
 
 project.mat.libsize = project.exp.mat %>% 
- colMeans
+  colMeans
 
 project.exp.mat %<>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
 colnames(project.exp.mat) %<>% substring(.,1,16)
 project.skcm = project.exp.mat
 
 dt.skcm = colData(project.exp.skcm) %>% as.data.table %>%
-.[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
-.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
-.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+  .[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+  .[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+  .[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
 
 crispr.genes = intersect(rownames(project.exp.mat), crispr$id)
 crispr.cox.out = lapply(crispr.genes, function(crispr.gene){ 
-      dt.skcm[,trg:=project.skcm[crispr.gene,]]
-      xx = rep(NA,5)
-      try({
-      	out = coxph(Surv(Survival, Event) ~ trg, data=dt.skcm) %>% summary 
-      	xx = out$coefficient["trg",]
-
-      })
-      xx
-    }) %>% do.call(rbind, .) %>%
-    data.table %>% 
-    set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
-    .[,gene:=crispr.genes]
+  dt.skcm[,trg:=project.skcm[crispr.gene,]]
+  xx = rep(NA,5)
+  try({
+    out = coxph(Surv(Survival, Event) ~ trg, data=dt.skcm) %>% summary 
+    xx = out$coefficient["trg",]
+    
+  })
+  xx
+}) %>% do.call(rbind, .) %>%
+  data.table %>% 
+  set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+  .[,gene:=crispr.genes]
 
 crispr.cox.out[,padj:=p.adjust(P,method="fdr")]
 
 library(EnhancedVolcano)
 p = EnhancedVolcano(crispr.cox.out,
-	lab = crispr.cox.out$gene,
-	x = 'estimate',
-	y = 'P',
-	pCutoff = 1E-2,
-	FCcutoff = .2,
-	# pointSize = c(ifelse(crispr.cox.out$padj <  .1, 3, 2)),
-	labSize = 4.0,
-	legend=c('NS','Estimate','P value',
-		'P value & Estimate'),
-	legendPosition = 'bottom',
-	legendLabSize = 8,
-	legendIconSize = 4.0,
-	drawConnectors = TRUE,
-	widthConnectors = 0.2,
-	xlim = c(-.5, .5),
-	colAlpha = 0.8,
-	colConnectors = 'grey30'
-	)
+                    lab = crispr.cox.out$gene,
+                    x = 'estimate',
+                    y = 'P',
+                    pCutoff = 1E-2,
+                    FCcutoff = .2,
+                    # pointSize = c(ifelse(crispr.cox.out$padj <  .1, 3, 2)),
+                    labSize = 4.0,
+                    legend=c('NS','Estimate','P value',
+                             'P value & Estimate'),
+                    legendPosition = 'bottom',
+                    legendLabSize = 8,
+                    legendIconSize = 4.0,
+                    drawConnectors = TRUE,
+                    widthConnectors = 0.2,
+                    xlim = c(-.5, .5),
+                    colAlpha = 0.8,
+                    colConnectors = 'grey30'
+)
 ggsave(file="results/.figs/murad/cox.pdf",p)
 
 gene.order = crispr.cox.out[order(estimate)]$gene
 avi.dt = lapply(gene.order, function(crispr.gene) {
-	dt.skcm %>% 
-	mutate(expr=project.skcm[crispr.gene,],gene=crispr.gene)
+  dt.skcm %>% 
+    mutate(expr=project.skcm[crispr.gene,],gene=crispr.gene)
 }%>% 
-mutate(expr.r=ifelse(expr> median(expr), "high", "low"))
-	) %>% do.call(rbind,.)
+  mutate(expr.r=ifelse(expr> median(expr), "high", "low"))
+) %>% do.call(rbind,.)
 
 for (start in seq(1,69,16)) {
-	end = start +15
-	end = ifelse(end>70, 70, end)
-	gene.order.curr = gene.order[seq(start,end)]
-	avi.curr = avi.dt[gene %in% gene.order.curr]
-	avi.curr$gene %<>% factor(.,levels=gene.order.curr)
-	fit1 <- survfit( Surv(Survival, Event) ~ expr.r, data = avi.curr)
-	p = ggsurvplot_facet( fit1, avi.curr, facet.by = "gene",  palette = "jco", pval = TRUE)
-	ggsave(sprintf("results/.figs/murad/cox.%s.pdf", start), width=10, height=8)
+  end = start +15
+  end = ifelse(end>70, 70, end)
+  gene.order.curr = gene.order[seq(start,end)]
+  avi.curr = avi.dt[gene %in% gene.order.curr]
+  avi.curr$gene %<>% factor(.,levels=gene.order.curr)
+  fit1 <- survfit( Surv(Survival, Event) ~ expr.r, data = avi.curr)
+  p = ggsurvplot_facet( fit1, avi.curr, facet.by = "gene",  palette = "jco", pval = TRUE)
+  ggsave(sprintf("results/.figs/murad/cox.%s.pdf", start), width=10, height=8)
 }
 
 ## Identify if this genes are enriched for correlation with TRD allele levels. 
@@ -150,30 +151,30 @@ trg.crispr.cor = WGCNA::corAndPvalue(project.skcm[trg.alleles,] %>% t, project.s
 library(corrplot)
 pdf("results/.figs/murad/cor.trg.pdf", width=16, height=8)
 # corrplot(trg.crispr.cor$cor, p.mat = trg.crispr.cor$p, insig = "label_sig",
-         # sig.level = c(1E-8, 1E-3, .01), pch.cex = .9, pch.col = "white")
+# sig.level = c(1E-8, 1E-3, .01), pch.cex = .9, pch.col = "white")
 corrplot(trg.crispr.cor$cor, method="square")
 dev.off()
 
 
 
 crispr.interaction.out.skcm = lapply(trg.alleles, function(trg.allele){ 
-    dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
-      .[,CD8B:=project.skcm["CD8B",]]
-    out = mclapply(gene.order, function(ii) {
-        dt.skcm[,gene:=project.skcm[ii,]]%>%
-        calculate.cox.interaction.tr
-    }, mc.cores = 60) %>% 
+  dt.skcm[,trg:=project.skcm[trg.allele,]]%>%
+    .[,CD8B:=project.skcm["CD8B",]]
+  out = mclapply(gene.order, function(ii) {
+    dt.skcm[,gene:=project.skcm[ii,]]%>%
+      calculate.cox.interaction.tr
+  }, mc.cores = 60) %>% 
     do.call(rbind, .) %>%
     data.table %>% 
     set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
     .[,gene:=gene.order]
-    out 
+  out 
 }) 
 names(crispr.interaction.out.skcm) = trg.alleles
 crispr.interaction.mat = lapply(crispr.interaction.out.skcm, function(tt) {
-	ifelse(tt$P<0.03, tt$z,0)
+  ifelse(tt$P<0.03, tt$z,0)
 } )%>% do.call(rbind, .) %>% 
-set_colnames(gene.order)
+  set_colnames(gene.order)
 
 sel = apply(crispr.interaction.mat,1,function(tt) tt %>% is.na %>% sum) < length(gene.order)
 crispr.interaction.mat = crispr.interaction.mat[sel,]
@@ -185,10 +186,10 @@ dev.off()
 
 out = dt.skcm 
 avi.dt = out %>%
-.[,TRGV9:=project.skcm["TRGV9",]] %>% 
-.[,TRGV9:=ifelse(TRGV9> median(TRGV9),"high", "low")] %>% 
-.[,BTN3A1:=as.numeric(project.skcm["BTN3A1",])] %>% 
-.[,BTN3A1:=ifelse(BTN3A1> median(BTN3A1),"high", "low")]
+  .[,TRGV9:=project.skcm["TRGV9",]] %>% 
+  .[,TRGV9:=ifelse(TRGV9> median(TRGV9),"high", "low")] %>% 
+  .[,BTN3A1:=as.numeric(project.skcm["BTN3A1",])] %>% 
+  .[,BTN3A1:=ifelse(BTN3A1> median(BTN3A1),"high", "low")]
 
 fit1 <- survfit( Surv(Survival, Event) ~ BTN3A1, data = avi.dt)
 p = ggsurvplot_facet( fit1, avi.dt, facet.by = "TRGV9",  palette = "jco", pval = TRUE)
@@ -209,32 +210,32 @@ mevalonate.genes = mevalonate.genes$id[seq(2,20)]
 crispr.genes = c(mevalonate.genes, "BTN2A1", "BTN3A1")
 all.cox =list()
 for (cancer.curr in unique(dt.curr$dataset)) {
-	cancer.curr.inx = dt.curr$dataset==cancer.curr
-	dt.cancer.curr = dt.curr[cancer.curr.inx,]
-	project.cancer.curr = project.exp.mat[,cancer.curr.inx]
-
-	crispr.cox.out = lapply(crispr.genes, function(crispr.gene){ 
-		dt.cancer.curr[,trg:=project.cancer.curr[crispr.gene,]]
-		xx = rep(NA,5)
-		try({
-			out = coxph(Surv(Survival, Event) ~ trg, data=dt.cancer.curr) %>% summary 
-			xx = out$coefficient["trg",]
-		})
-		xx
-	}) %>% do.call(rbind, .) %>%
-	data.table %>% 
-	set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
-	.[,gene:=crispr.genes]
-
-	crispr.cox.out[,padj:=p.adjust(P,method="fdr")]
-	crispr.cox.out$cancer.type = cancer.curr
-	all.cox[[cancer.curr]]= crispr.cox.out
+  cancer.curr.inx = dt.curr$dataset==cancer.curr
+  dt.cancer.curr = dt.curr[cancer.curr.inx,]
+  project.cancer.curr = project.exp.mat[,cancer.curr.inx]
+  
+  crispr.cox.out = lapply(crispr.genes, function(crispr.gene){ 
+    dt.cancer.curr[,trg:=project.cancer.curr[crispr.gene,]]
+    xx = rep(NA,5)
+    try({
+      out = coxph(Surv(Survival, Event) ~ trg, data=dt.cancer.curr) %>% summary 
+      xx = out$coefficient["trg",]
+    })
+    xx
+  }) %>% do.call(rbind, .) %>%
+    data.table %>% 
+    set_colnames(c("estimate", "exp", "se", "z", "P")) %>% 
+    .[,gene:=crispr.genes]
+  
+  crispr.cox.out[,padj:=p.adjust(P,method="fdr")]
+  crispr.cox.out$cancer.type = cancer.curr
+  all.cox[[cancer.curr]]= crispr.cox.out
 }
 all.cox.dt = all.cox %>% do.call(rbind,.) %>% as.data.table
 all.cox.dt[,plot.value:=ifelse(padj<0.05, z, 0)]
 out = dcast(all.cox.dt, gene~cancer.type, value.var="plot.value" ) 
 out.mat = out[,-1,with=F] %>% as.matrix %>% 
-set_rownames(out$gene)
+  set_rownames(out$gene)
 out.mat = out.mat[crispr.genes,]
 pdf("~/liulab_home/projects/gdt/results/.figs/murad/pancancer.interaction.trg.melavolante.pdf", width=16, height=8)
 corrplot(t(out.mat), is.corr = FALSE, method = "square")
@@ -243,13 +244,13 @@ dev.off()
 trd2.cor = list()
 trg9.cor = list()
 for(cancer.curr in unique(dt.curr$dataset)) {
-	cancer.curr.inx = dt.curr$dataset==cancer.curr
-	dt.cancer.curr = dt.curr[cancer.curr.inx,]
-	project.cancer.curr = project.exp.mat[,cancer.curr.inx]
-	trdv29.alleles = c("TRDV2", "TRGV9")
-	trg.crispr.cor = WGCNA::corAndPvalue(project.cancer.curr[trdv29.alleles,] %>% t, project.cancer.curr[crispr.genes,] %>% t)
-	trd2.cor[[cancer.curr]] = trg.crispr.cor$cor["TRDV2",]
-	trg9.cor[[cancer.curr]] = trg.crispr.cor$cor["TRGV9",]
+  cancer.curr.inx = dt.curr$dataset==cancer.curr
+  dt.cancer.curr = dt.curr[cancer.curr.inx,]
+  project.cancer.curr = project.exp.mat[,cancer.curr.inx]
+  trdv29.alleles = c("TRDV2", "TRGV9")
+  trg.crispr.cor = WGCNA::corAndPvalue(project.cancer.curr[trdv29.alleles,] %>% t, project.cancer.curr[crispr.genes,] %>% t)
+  trd2.cor[[cancer.curr]] = trg.crispr.cor$cor["TRDV2",]
+  trg9.cor[[cancer.curr]] = trg.crispr.cor$cor["TRGV9",]
 }
 
 pdf("~/liulab_home/projects/gdt/results/.figs/murad/pancancer.cor.trd2..melavolante.pdf", width=16, height=8)
@@ -278,20 +279,20 @@ crispr$ENTREZID = gene.eg.dt[match(crispr$id,gene.eg.dt$SYMBOL),]$ENTREZID
 crispr = crispr[!is.na(ENTREZID)]
 
 geneList = (crispr$`neg|rank`) %>% 
-set_names(crispr$ENTREZID) %>%  
-sort(., decreasing = TRUE)
+  set_names(crispr$ENTREZID) %>%  
+  sort(., decreasing = TRUE)
 geneList = geneList[!(names(geneList) %>% duplicated)]
 geneList.rev = (crispr$`pos|rank`) %>% 
-set_names(crispr$ENTREZID) %>%  
-sort(., decreasing = TRUE)
+  set_names(crispr$ENTREZID) %>%  
+  sort(., decreasing = TRUE)
 geneList.rev = geneList.rev[!(names(geneList.rev) %>% duplicated)]
 
 
 ego3 <- gseKEGG(geneList     = geneList,
-               organism     = 'hsa',
-               minGSSize =2,
-               pvalueCutoff = 1,
-               verbose      = FALSE)
+                organism     = 'hsa',
+                minGSSize =2,
+                pvalueCutoff = 1,
+                verbose      = FALSE)
 
 ego5 <- gseGO(geneList     = geneList,
               OrgDb        = org.Hs.eg.db,
@@ -325,33 +326,52 @@ head(ewp.up)
 
 p = gseaplot2(ewp, geneSetID = 1:5)
 
-  p = clusterProfiler::dotplot(ewp.up, showCategory=50)
+p = clusterProfiler::dotplot(ewp.up, showCategory=50)
 p = clusterProfiler::dotplot(ewp, showCategory=50)
-    
- dir.create("results/.figs/murad")
- ggsave(filename = "results/.figs/murad/pathway.pdf",p)
- kk <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
- 	 OrgDb    = org.Hs.eg.db,
-               ont      = "BP",
-                                    pvalueCutoff = 0.05)
-  p = clusterProfiler::dotplot(kk, showCategory=30)
- ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
- 
+
+dir.create("results/.figs/murad")
+ggsave(filename = "results/.figs/murad/pathway.pdf",p)
+kk <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "BP",
+                                pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk, showCategory=30)
+ggsave(filename = "results/.figs/murad/go.pathway.pdf",p)
+
 ```
 
 ## 
 It would be super helpful if you could do your analysis looking at survival differences across all cancer types and the one ICB cohort with enough patients where you look at interactions between each of these genes and TRD/G genes. 
 ```{r}
+library(magrittr)
+library(data.table)
+project.exp = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
+library(SummarizedExperiment)
+
+
+project.exp.count = assay(project.exp) %>%
+  set_rownames(rowData(project.exp)$external_gene_name) 
+
+project.exp.mat = assay(project.exp) %>%
+  set_rownames(rowData(project.exp)$external_gene_name) 
+
+project.mat.libsize = project.exp.mat %>% 
+  colMeans
+
+project.exp.mat %<>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
+colnames(project.exp.mat) %<>% substring(.,1,16)
+project.skcm = project.exp.mat
+
 
 crispr.genes =  data.table(readxl::read_excel("~/liulab_home/projects/gdt/data/2020-0817.Murad_Top_Hits.xlsx", sheet = 1))
 gene.order = crispr.genes$id
 gene.order = ifelse(gene.order=="GLTSCR1", "BICRA", gene.order)
 
 project.exp.mat = assay(project.exp) %>%
-set_rownames(rowData(project.exp)$external_gene_name) 
+  set_rownames(rowData(project.exp)$external_gene_name) 
 
 project.mat.libsize = project.exp.mat %>% 
- colMeans
+  colMeans
 
 project.exp.mat %<>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
 colnames(project.exp.mat) %<>% substring(.,1,16)
@@ -360,19 +380,22 @@ temp = c("TRDV2", "TRGV9")
 trg.alleles = grep("^TR[GD][VC]",rownames(project.exp.mat), value=T) %>% sort
 
 dt.curr = colData(project.exp) %>% as.data.table %>%
-.[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
-.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
-.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+  .[,.(barcode, days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+  .[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+  .[,is.normal:=substring(barcode, 14,15) %>% as.numeric ] %>% 
+  .[,is.normal:=ifelse(is.normal>10, T, F)] %>%
+  .[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
 
 all.genes = c(trg.alleles, gene.order) %>% unique
 crispr.interaction.out.cancertypes = crispr.interaction.mats = list()
 cancer.types = unique(dt.curr$dataset)
 for (cancer.type in cancer.types) {
   print(sprintf("processing %s ... ", cancer.type))
-  cancertype.inx = which(dt.curr$dataset==cancer.type)
+  cancertype.inx = which(dt.curr$dataset==cancer.type & (!dt.curr$is.normal))
   project.cancertype = project.exp.mat[all.genes,cancertype.inx] %>% t %>% 
-  scale(., scale=T, center=F) %>% t
-  dt.cancertype = dt.curr[dataset==cancer.type]
+    scale(., scale=T, center=F) %>% t
+  dt.cancertype = dt.curr[cancertype.inx]
   
   crispr.interaction.out.cancertype = lapply(trg.alleles, function(trg.allele){ 
     dt.cancertype[,trg:=project.cancertype[trg.allele,]]
@@ -405,7 +428,7 @@ crispr.interaction.mats2 = lapply(names(crispr.interaction.mats), function(tt){
 
 sel = rowMeans(is.na(crispr.interaction.mats2) | (crispr.interaction.mats2==0)) < 1
 crispr.interaction.mats2 = crispr.interaction.mats2[sel,]
-pdf("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.trg.pdf", width=17, height=8)
+pdf("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.trg.v2.pdf", width=17, height=8)
 corrplot::corrplot(t(crispr.interaction.mats2), is.corr = FALSE, method = "square", tl.cex = 0.45)
 dev.off()
 
@@ -420,32 +443,157 @@ crispr.interaction.out.cancertypes2[,lab:=paste(gene,trdg, cancertype, sep=",")]
 crispr.interaction.out.cancertypes2[,estimate2:=ifelse(P<0.05, estimate, ifelse(abs(estimate) < 1, estimate, 0))]
 crispr.interaction.out.cancertypes2[,estimate2:=ifelse(abs(estimate2)<2.5, estimate2, sign(estimate2)*2.5)]
 
-  
+
 library(EnhancedVolcano)
 p = EnhancedVolcano(crispr.interaction.out.cancertypes2,
-	lab = crispr.interaction.out.cancertypes2$lab,
-	x = 'estimate2',
-	y = 'P',
-	pCutoff = 2E-3,
-	FCcutoff = 0.1,
-	# pointSize = c(ifelse(crispr.cox.out$padj <  .1, 3, 2)),
-	labSize = 2.0,
-	legend=c('NS','Estimate','P value',
-		'P value & Estimate'),
-	legendPosition = 'bottom',
-	legendLabSize = 8,
-	legendIconSize = 4.0,
-	drawConnectors = TRUE,
-	widthConnectors = 0.2,
-	# xlim = c(-.5, .5),
-	ylim = c(0, 5),
-	colAlpha = 0.8,
-	colConnectors = 'grey30'
-	)
-ggsave("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.volcano.pdf", width=16, height=8)
+                    lab = crispr.interaction.out.cancertypes2$lab,
+                    x = 'estimate2',
+                    y = 'P',
+                    pCutoff = 2E-3,
+                    FCcutoff = 0.1,
+                    # pointSize = c(ifelse(crispr.cox.out$padj <  .1, 3, 2)),
+                    labSize = 2.0,
+                    legend=c('NS','Estimate','P value',
+                             'P value & Estimate'),
+                    legendPosition = 'bottom',
+                    legendLabSize = 8,
+                    legendIconSize = 4.0,
+                    drawConnectors = TRUE,
+                    widthConnectors = 0.2,
+                    # xlim = c(-.5, .5),
+                    ylim = c(0, 5),
+                    colAlpha = 0.8,
+                    colConnectors = 'grey30'
+)
+ggsave("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.volcano.v2.pdf", width=16, height=8)
 
 crispr.interaction.out.cancertypes2 = crispr.interaction.out.cancertypes2[order(P)]
-write.table(x = crispr.interaction.out.cancertypes2, file="/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.txt", sep="\t", row.names = F, col.names = T, quote = F)
+write.table(x = crispr.interaction.out.cancertypes2, file="/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.v2.txt", sep="\t", row.names = F, col.names = T, quote = F)
+aa = fread("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.v2.txt")
+aa[,FDR:=p.adjust(P, method="BH"), by=trdg]
+aa[,estimate2:=ifelse(FDR<0.1, estimate, 0)]
+write.table(x = aa, file="/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.fdr.v2.txt", sep="\t", row.names = F, col.names = T, quote = F)
 
+```
+
+## Plotting km plots for all the top interaction genes in interaction.fdr.txt 
+
+```{r}
+aa = fread("/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817.interaction.fdr.v2.txt")
+interaction.sig = aa[FDR<0.2]
+interaction.sig = aa[trdg %in% c("TRDV2", "TRGV9")]
+curr.dir = "/liulab/asahu/projects/gdt/results/.figs/murad/2020-0817/all.interaction"
+dir.create(curr.dir)
+dt.merge.count = cbind(dt.curr, t(project.exp.count[all.genes,]))
+dt.merge = cbind(dt.curr, t(project.exp.mat[all.genes,]))
+library(cowplot)
+library(survminer)
+library(survival)
+library(magrittr)
+
+for (int.inx in seq(nrow(interaction.sig))) {
+  row.curr = interaction.sig[int.inx,]
+  cancer.type = row.curr$cancertype 
+  tr.allele = row.curr$trdg
+  hit.curr = row.curr$gene
+  cancertype.inx = which((dt.merge$dataset==paste0("TCGA-", cancer.type)) & (!dt.merge$is.normal))
+  avi.dt = dt.merge[cancertype.inx]
+  avi.dt%<>%
+    .[,TR:=avi.dt[[tr.allele]]] %>% 
+    .[,TR:=ifelse(TR> median(TR),"TR high", "TR low")] %>% 
+    .[,HIT:=as.numeric(avi.dt[[hit.curr]])] %>% 
+    .[,HIT:=ifelse(HIT> median(HIT),"HIT high", "HIT low")]
+  
+  fit1 <- survfit( Surv(Survival, Event) ~ HIT, data = avi.dt)
+  p1 = ggsurvplot_facet( fit1, avi.dt, facet.by = "TR",  palette = "jco", pval = TRUE) 
+  
+  # ggsave("results/.figs/murad/TR.HIT.km.pdf")
+  fit1 <- survfit( Surv(Survival, Event) ~TR , data = avi.dt)
+  p2 = ggsurvplot_facet( fit1, avi.dt, facet.by = "HIT",  palette = "jco", pval = TRUE)
+  
+  # ggsave("results/.figs/murad/HIT.TR.km.pdf")
+  title = sprintf("%s %s %s", tr.allele, hit.curr, cancer.type)
+  p3 = plot_grid(p1, p2, labels =  title, ncol = 1) 
+  ggsave(sprintf("%s/%s_%s_%s.pdf", curr.dir, tr.allele, hit.curr, cancer.type ),p3)
+}
+
+for (tr.allele  in unique(interaction.sig$trdg)) {
+for (hit.curr  in unique(interaction.sig$gene)) {
+  
+  cancer.type = "PAN"
+  tr.allele = row.curr$trdg
+  hit.curr = row.curr$gene
+  cancertype.inx = which( (!dt.merge$is.normal))
+  avi.dt = dt.merge[cancertype.inx]
+  avi.dt%<>%
+    .[,TR:=avi.dt[[tr.allele]]] %>% 
+    .[,TR:=ifelse(TR> median(TR),"TR high", "TR low")] %>% 
+    .[,HIT:=as.numeric(avi.dt[[hit.curr]])] %>% 
+    .[,HIT:=ifelse(HIT> median(HIT),"HIT high", "HIT low")]
+  
+  fit1 <- survfit( Surv(Survival, Event) ~ HIT, data = avi.dt)
+  p1 = ggsurvplot_facet( fit1, avi.dt, facet.by = "TR",  palette = "jco", pval = TRUE) 
+  
+  # ggsave("results/.figs/murad/TR.HIT.km.pdf")
+  fit1 <- survfit( Surv(Survival, Event) ~TR , data = avi.dt)
+  p2 = ggsurvplot_facet( fit1, avi.dt, facet.by = "HIT",  palette = "jco", pval = TRUE)
+  
+  # ggsave("results/.figs/murad/HIT.TR.km.pdf")
+  title = sprintf("%s %s %s", tr.allele, hit.curr, cancer.type)
+  p3 = plot_grid(p1, p2, labels =  title, ncol = 1) 
+  ggsave(sprintf("%s/%s_%s_%s.pdf", curr.dir, tr.allele, hit.curr, cancer.type ),p3)
+}
+}
+```
+## debug 
+
+```{r}
+sel.interaction = aa[estimate< 0 &  P < 0.01][order(P)]
+get.cox.debug = function(dtx){
+  dtx = dtx[!is.na(gene)]
+  coxph(Surv(Survival, Event) ~ gene + trg +  gene*trg , dtx)%>%
+    summary 
+}
+
+# curr.label = IRF1,TRGV7,SARC
+hit.curr = gene = ii = "BTN3A1"
+trg.allele = tr.allele = "TRGV9" 
+hit.curr = gene = ii = "CD8A"
+trg.allele = tr.allele = "CD274" 
+cancer.type = "SKCM"
+hit.curr = gene = ii = "FOXP1"
+trg.allele = tr.allele = "TRDV1" 
+cancer.type = "OV"
+
+inx = 1 
+hit.curr = gene = ii = bb[inx]$gene
+trg.allele = tr.allele = bb[inx]$trdg
+cancer.type = bb[inx]$cancertype
+
+cancertype.inx = which(dt.curr$dataset==paste0("TCGA-", "", cancer.type) & (!dt.curr$is.normal))
+# cancertype.inx = which(dt.curr$dataset==paste0("TCGA-", "", cancer.type) )
+project.cancertype = project.exp.mat[all.genes,cancertype.inx] %>% t %>% 
+  scale(., scale=T, center=F) %>% t
+dt.cancertype = dt.curr[cancertype.inx]
+dt.cancertype[,trg:=project.cancertype[trg.allele,]]
+out = dt.cancertype[,gene:=project.cancertype[ii,]]%>%
+  get.cox.debug
+
+avi.dt = dt.merge[cancertype.inx]
+# avi.dt = dt.merge.count[cancertype.inx]
+avi.dt%<>%
+  .[,TR:=avi.dt[[tr.allele]]] %>% 
+  .[,TR:=ifelse(TR> median(TR),"TR high", "TR low")] %>% 
+  .[,HIT:=as.numeric(avi.dt[[hit.curr]])] %>% 
+  .[,HIT:=ifelse(HIT> median(HIT),"HIT high", "HIT low")]
+
+fit1 <- survfit( Surv(Survival, Event) ~ HIT, data = avi.dt)
+p1 = ggsurvplot_facet( fit1, avi.dt, facet.by = "TR",  palette = "jco", pval = TRUE) 
+
+fit1 <- survfit( Surv(Survival, Event) ~TR , data = avi.dt)
+p2 = ggsurvplot_facet( fit1, avi.dt, facet.by = "HIT",  palette = "jco", pval = TRUE)
+
+title = sprintf("%s %s %s", tr.allele, hit.curr, cancer.type)
+p3 = plot_grid(p1, p2, labels =  title, ncol = 1) 
 ```
 

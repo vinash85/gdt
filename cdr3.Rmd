@@ -426,7 +426,56 @@ tcga.mat = assay(tcga.biolinks) %>%
 set_rownames(rowData(tcga.biolinks)$external_gene_name) %>% t %>% 
  scale(., scale=T, center=T) %>% t 
 
- grep("^TR[GD][VDJC]",rownames(tcga.mat), value=T 
+ grep("^TR[GD][VDJC]",rownames(tcga.mat), value=T )
+
+```
+
+## Expression based distribution of gamma delta allele across cancer tpes
+
+```{r}
+library(magrittr)
+project.exp = readRDS("~/liulab_home/data/tcga/TCGA_gdc/tcgabiolinks/all.tcga.expression.RDS")
+tcga.cancercodes = fread("~/liulab_home/data/tcga/tcga.cancercodes.txt", header=F)
+library(SummarizedExperiment)
+project.mat.libsize = assay(project.exp) %>% 
+ colMeans
+project.exp.mat = assay(project.exp) %>% sweep(., project.mat.libsize, MARGIN = 2, FUN = "/")
+colnames(project.exp.mat) %<>% substring(.,1,16)
+rownames(project.exp.mat) = rowData(project.exp)$external_gene_name
+
+dt.all = colData(project.exp)
+dt.curr = colData(project.exp) %>% as.data.table %>%
+.[,.(days_to_death, days_to_last_follow_up, vital_status, dataset=project_id)] %>% 
+.[,Event:=ifelse(vital_status=="Dead", 1, 0)]%>% 
+.[,Survival:=ifelse(vital_status=="Dead", days_to_death, days_to_last_follow_up)]
+
+trg.alleles = grep("^TR[DG]V[0-9]", rownames(project.exp.mat), value=T)
+exp.curr = project.exp.mat[trg.alleles,] %>% t %>% melt %>%  
+  data.table 
+
+exp.curr$cancertype =  rep(gsub("TCGA-","", dt.all$project_id), length(trg.alleles))
+
+avi.dt = exp.curr[!(cancertype=="THYM")]
+avi.summ = avi.dt[,mean(value), by=cancertype][order(V1)]
+avi.dt$cancertype %<>% factor(levels = rev(avi.summ$cancertype))
+p = ggplot(avi.dt, aes(x=cancertype, y=value, fill=cancertype)) + 
+geom_boxplot(outlier.shape = NA) +
+   theme(axis.text.x = element_blank()) + 
+  facet_wrap(~Var2) + 
+ylim(c(0,.5)) +
+             theme_bw() 
+
+avi.summ$cancer = tcga.cancercodes[match(avi.summ$cancertype, V1)]$V2
+avi.dt$cancer = tcga.cancercodes[match(avi.dt$cancertype, V1)]$V2%>% 
+  factor(levels=avi.summ$cancer)
+p1= ggplot(avi.dt, aes(x=cancer, y=value, fill=cancer)) + 
+geom_boxplot(outlier.shape = NA) +
+   theme(axis.text.x = element_blank()) + 
+  guides(fill=FALSE)+
+  coord_flip() + 
+ylim(c(0,.5)) +
+             theme_bw() 
+
 
 ```
 

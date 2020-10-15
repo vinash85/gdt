@@ -9,14 +9,15 @@ output: html_notebook
 library(data.table)
 library(magrittr)
 library(ggpubr)
-dat = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = 3,skip = 1) %>% data.table 
+dat = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = 8,skip = 1) %>% data.table 
 dat$groups = rep(c("811 + PD1", "vehicle + PD1", "811 + isotype", "vehicle + isotype"), each=10)
 dat$groups = factor(dat$groups, levels=c( "vehicle + isotype", "811 + isotype", "vehicle + PD1", "811 + PD1"))
+dat$Volume=ifelse(dat$Volume==0,NA, dat$Volume)
 
 
-my_comparisons <- list( c("vehicle + isotype", "811 + isotype"), c("vehicle + isotype", "vehicle + PD1"), c("vehicle + PD1", "811 + PD1") )
+my_comparisons <- list( c("vehicle + isotype", "811 + isotype"), c("vehicle + isotype", "vehicle + PD1"), c("vehicle + PD1", "811 + PD1") , c("811 + isotype", "811 + PD1"))
 p <- ggboxplot(dat, x = "groups", y = "Volume",
-          color = "groups", palette = "jco",
+          color = "groups", palette = "jco", title = "Day 21",
           add = "jitter") + 
   stat_compare_means(method = "wilcox.test", comparisons = my_comparisons)
 print(p)
@@ -24,15 +25,22 @@ p
 ```
 
 ```{r}
-dat0 = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = 2,skip = 1) %>% data.table 
-dat0$groups = rep(c("811 + PD1", "vehicle + PD1", "811 + isotype", "vehicle + isotype"), each=10)
-dat0$groups = factor(dat$groups, levels=c( "vehicle + isotype", "811 + isotype", "vehicle + PD1", "811 + PD1"))
-dat$time=8
-dat0$time  = 6
-avi.dt = rbind(dat0[,.(groups, Volume, time)], dat[,.(groups, Volume, time)])
+sheets = c(2:9)
+days = c(6,8,11,13, 15, 19, 21, 25)
+avi.dt = NULL 
+for (ii in seq_along(sheets)) {
+  dat0 = readxl::read_excel("~/liulab_home/projects/gdt/data/4T1 811 exp1 8262020.xlsx", sheet = sheets[ii],skip = 1) %>% data.table 
+  dat0$groups = rep(c("811 + PD1", "vehicle + PD1", "811 + isotype", "vehicle + isotype"), each=10)
+  dat0$groups = factor(dat$groups, levels=c( "vehicle + isotype", "811 + isotype", "vehicle + PD1", "811 + PD1"))
+  dat0$Volume=ifelse(dat0$Volume==0,NA, dat0$Volume)
+  dat0$time=days[ii]
+  avi.dt %<>% rbind(dat0[,.(groups, Volume, time)]) 
+  
+}
+
 df.summary2 <- avi.dt %>%
   group_by(groups, time) %>%
-  summarise( se = sd(Volume)/sqrt(10), Volume = mean(Volume))
+  summarise( se = sd(Volume, na.rm = T)/sqrt(10), Volume = mean(Volume, na.rm=T))
 
 p = ggplot(df.summary2, aes(time, Volume)) +
   geom_line(aes(color = groups, group = groups))+
@@ -44,4 +52,3 @@ p = ggplot(df.summary2, aes(time, Volume)) +
 
 p
 ```
-

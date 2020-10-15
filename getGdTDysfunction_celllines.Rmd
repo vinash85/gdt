@@ -1,0 +1,216 @@
+---
+title: "Compare cell lines with and without gdT lysis"
+output: html_notebook
+---
+
+
+## 
+The cell line targeted by gdT was downloaded from Gründer, C., Van Dorp, S., Hol, S., Drent, E., Straetemans, T., Heijhuurs, S., … Kuball, J. (2012). γ9 and δ2CDR3 domains regulate functional avidity of T cells harboring γ9δ2TCRs. Blood, 120(26), 5153–5162. 
+
+Response is in sorted order 
+
+1. Daudi, kcl22, Jurkat, Cal27, A431, FaDu, SCC-9, Nb4, BV173,  U266, k562,  T2,   SW480, HNT08, MZ1851RC, PRMI2650, mda-mdb231,  soas-2, HepG2, 
+2. No-significnat : ML1, HL60
+3. Primary tissue not responding : PSF5, MS1, MRC5,  Hepatocytes
+
+
+## Download Expression data for cell line 
+```{r}
+library(Matrix)
+ccle.exp = fread("~/liulab_home/data/CCLE/CCLE_RNAseq_genes_counts_20180929.gct.gz")
+cell.exp.mat  = ccle.exp[,-(1:2),with=F] %>% as.matrix %>% 
+  set_rownames(ccle.exp$Name)
+cell.mat.libsize = cell.exp.mat %>% 
+ colMeans
+cell.exp.tpm= cell.exp.mat %>% sweep(., cell.mat.libsize, MARGIN = 2, FUN = "/")
+cell.grp1 = c( "Daudi", "kcl22", "Jurkat", "Cal27", "A431", "FaDu", "SCC9", "Nb4", "BV173", "U266", "k562", "T2", "SW480", "HNT08", "MZ1851RC", "PRMI2650", "mdamb231", "soas2", "HepG2")
+cell.grp2 = c("ML1", "HL60")
+cell.grp3 = c("PSF5", "MS1", "MRC5", "Hepatocytes")
+cell.grps = c(cell.grp1, cell.grp2, cell.grp3)
+cell.inx = sapply(cell.grps, function(cell.grp) {
+  paste0("^",cell.grp) %>%
+  grep(., colnames(ccle.exp),value=T, ignore.case = T)
+  })
+```
+
+##Differential analysis
+```{r}
+count.curr = ccle.exp[,unlist(cell.inx),with=F] %>% as.matrix %>% 
+  set_rownames(ccle.exp$Name)
+cell.inx.grp1 = cell.inx[cell.grp1] %>% unlist
+cell.inx.grp2 = cell.inx[cell.grp2] %>% unlist
+deg = avinash.scRNA::DESeq2DETest(count.curr, cell.inx.grp1, cell.inx.grp2)
+deg.dt = deg %>% as.data.table %>% 
+  .[,gene:=ccle.exp$Description] %>% 
+  .[order(pvalue)]
+```
+
+## correlation analysis 
+```{r}
+
+cell.tpm.curr = cell.exp.tpm[,unlist(cell.inx[c(cell.grp1, cell.grp2)])]
+cor.p = WGCNA::corAndPvalue(x=1:15,y=t(cell.tpm.curr),method="spearman")
+cor.dt.old = cor.dt
+cor.dt = do.call(rbind, cor.p) %>%  t %>% as.data.table %>% 
+  set_colnames(names(cor.p)) %>%
+  .[,gene:=ccle.exp$Description]%>% 
+  .[order(p)]
+```
+##pathway enrichment
+```{r}
+deg.cor = cbind(deg.dt, cor.dt[,-6,with=F][match(deg.dt$gene, cor.dt$gene)])
+deg.cor[padj < 0.1 &  p<0.05]
+
+gene.eg.dt = clusterProfiler::bitr(deg.dt[padj<0.1][log2FoldChange>0]$gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+gene.eg.dt = clusterProfiler::bitr(cor.dt[p<1E-3][cor<0]$gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  minGSSize = 2,
+                                  pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk, showCategory=30)
+kk1 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("BP"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+p1 = clusterProfiler::dotplot(kk1, showCategory=30)
+kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("MF"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+p2 = clusterProfiler::dotplot(kk2, showCategory=30)
+```
+
+
+```{r}
+
+RunLISAWeb <- function(genes, project, organism = "GRCh38")
+{
+  if(organism == "GRCh38"){
+    species = "hg38"
+  }
+  if(organism == "GRCm38"){
+    species = "mm10"
+  }
+  
+  cluster_markers_list <- split(genes, genes$cluster)
+  
+  outputDir <- paste0(project, ".lisa")
+  if (!file.exists(outputDir)) dir.create(path=outputDir)  
+  
+  res_zip_url_list = rep("zip", length(cluster_markers_list))
+  names(res_zip_url_list) = names(cluster_markers_list)
+  for(i in names(cluster_markers_list))
+  {
+    cluster_marker = cluster_markers_list[[i]]$gene
+    if(length(cluster_marker) <= 500){
+      cluster_marker_str = paste(cluster_marker, collapse = "\n")
+    }else{
+      cluster_marker_str = paste(cluster_marker[1:500], collapse = "\n")
+    }
+    Sys.sleep(3)
+    res_zip_url = PostForm(geneset = cluster_marker_str, jobname = paste0("cluster_", i))
+    message(paste0(Sys.time(),": Lisa in cluster ", i, " was posted successfully."))
+    res_zip_url_list[i] = res_zip_url
+  }
+  
+  Sys.sleep(300)
+  
+  for(i in names(res_zip_url_list)){
+    lisaRes <- paste0(outputDir, "/",i, ".zip")
+    lisaDir <- paste0(outputDir, "/",i)
+    DownloadResult(res_zip_url_list[i], lisaRes)
+    if(file.exists(lisaDir)){
+      system(paste0("rm -r ", lisaDir))
+    }
+    unzip(lisaRes, exdir = lisaDir)
+    file.remove(lisaRes)
+    message(paste0(Sys.time(),": Lisa in cluster ", i, " is done."))
+  }
+  
+  tf_all=NULL
+  for(i in names(cluster_markers_list))
+  {
+    lisaDir <- paste0(outputDir, "/",i)
+    fileName = list.files(lisaDir, "*chipseq_cauchy_combine_dedup.csv")
+    fileName = file.path(lisaDir, fileName)
+    if (file.exists(fileName))
+    {
+      tf_p=read.csv(fileName)
+      rownames(tf_p)=tf_p$TF
+      tf=as.vector(sort(tf_p$TF))
+      tf_temp=data.frame(tf_p[tf,2])
+      colnames(tf_temp)=paste0(i)
+      tf_all=c(tf_all,list(tf_temp))
+    }
+  }
+  
+  tf_all <- do.call(cbind, tf_all)
+  tf_all_log10=-log10(tf_all)
+  if(organism == "GRCm38"){
+    tf = Hmisc::capitalize(tolower(tf))
+  }
+  rownames(tf_all_log10)=tf
+  write.table(tf_all_log10,paste0(project,'_lisa.txt'),sep='\t',quote = F)
+  return(tf_all_log10)
+}
+
+PostForm <- function(geneset, jobname)
+{
+  url = "http://lisa.cistrome.org"
+  
+  myheaders = c('User-Agent'='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.5 Safari/605.1.15',
+                'Accept'='text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Encoding'='gzip, deflat',
+                'Accept-Language'='en-us')
+  resp1 = httr::GET(url = url, httr::add_headers(.headers = myheaders))
+  resp1_text = httr::content(resp1, "text")
+  
+  csrf_pattern = "<input id=\"csrf_token\" name=\"csrf_token\" type=\"hidden\" value=\"(.*)\">"
+  csrf = stringr::str_match(resp1_text, csrf_pattern)[1,2]
+  
+  form_post = list(
+    csrf_token = csrf,
+    species = "hg38",
+    genes = geneset,
+    name = jobname
+  )
+  
+  resp2 = httr::POST(url, httr::add_headers(.headers = myheaders), body = form_post, encode="form")
+  
+  resp3 = httr::GET(resp2$url)
+  resp3_text = httr::content(resp3, "text")
+  
+  zip_pattern = "<a class=\"nav-link\" href=\"(.*).zip\">"
+  res_zip = stringr::str_match(resp3_text, zip_pattern)[1,2]
+  res_zip_url = paste0(url, res_zip, ".zip")
+  return(res_zip_url)
+}
+
+DownloadResult <- function(resurl, destfile)
+{
+  resp4 = httr::GET(resurl)
+  while(resp4$status_code != 200){
+    Sys.sleep(60)
+    resp4 = httr::GET(resurl)
+  }
+  
+  download.file(resurl, destfile)
+}
+
+
+```
+
+```{r}
+aa = cor.dt.old[p<1E-3][cor<0]
+aa = cor.dt.old[p<1E-2][cor>0]
+write.table(aa$gene, file="~/lisa.txt", quote = F, row.names = F, col.names = F)
+# aa[,genes:=gene]
+# aa[,cluster:=1]
+# out = RunLISAWeb(genes=aa,project="neg.cor.dt.old")
+# save(file="~/temp.RData", aa)
+
+```
+
