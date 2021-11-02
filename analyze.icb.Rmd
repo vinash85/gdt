@@ -89,6 +89,8 @@ my.survival.waterfallplot = function(dat,
   b
 }
 ```
+
+
 ```{r}
 p = followup.curr[,.(response=`Best Confirmed Overall Response`, y=gamma.delta.score)] %>%
   .[!(response=="NE")] %>% 
@@ -97,7 +99,7 @@ my.waterfallplot(., variable = "response")
  p = p +
   scale_fill_manual(values=c("red4", "lightsalmon1", "grey90", "grey98"), name = "response") + 
    xlab(element_blank()) + ylab("Gamma delta scores") 
-
+p1 = p
  
  ## Survival (does not work)
  
@@ -109,5 +111,51 @@ my.waterfallplot(., variable = "response")
    xlab(element_blank()) + ylab("Gamma delta scores") 
  
 ```
+## Function to calculate correlation 
 
+```{r}
+write.csv(file="../../data/ref.gdt.weighted.csv", x = ref.exp.sel,quote = F,row.names = T)
+gdt.file = "../../data/ref.gdt.weighted.csv"
+
+#' Calculate gamma-delta score from expression matrix
+#'
+#' @param exprs : expression matrix with rows as genes columns as samples, and rownames are hugo gene symbol
+#' @param gdt.file : location of gamma delta weighted score
+#'
+#' @return
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' calc.gdt.score(exprs=exprs,gdt.file = "/liulab/asahu/projects/gdt/data/ref.gdt.weighted.csv")}
+calc.gdt.score <- function(exprs, gdt.file) {
+  
+  require(data.table)
+  require(magrittr)
+  gdt.exp = fread(gdt.file)
+  gdt.mat = gdt.exp[,2:3,with=F] %>% 
+    as.matrix() %>% 
+    set_rownames(gdt.exp$V1)
+  common.genes = rownames(exprs) %>% intersect(gdt.exp$V1)
+  (t(exprs[common.genes,]) %*% gdt.mat[common.genes,])%>% rowSums()
+  
+}
+
+aa = calc.gdt.score(exprs=icb.exp.mat,gdt.file = "../../data/ref.gdt.weighted.csv")
+```
+
+##  create a dataset file for erve prediction 
+```{r}
+tcga.dataset = fread("/homes6/asahu/project/deeplearning/icb/data/tcga/scrna.v4.genes/dataset.txt")
+sample.name = fread("/homes6/asahu/project/deeplearning/icb/data/tcga/scrna.v4.allgenes.nopcs/samples_name.txt")
+if.start.inx = which(colnames(tcga.dataset)== "B_cells_naive")
+erv.inx = grep("ERV", colnames(tcga.dataset))
+expr = tcga.dataset[,c(seq(if.start.inx-1), erv.inx),with=F]
+output.dir = "/homes6/asahu/project/deeplearning/icb/data/tcga/erv/"
+avinash::write.dataset(output.dir = output.dir, dataset = expr, sample.name = sample.name$x)
+```
+```{bash}
+CUDA_VISIBLE_DEVICES=3 python train.py  --data_dir  ~/liulab_home/projects/erv/results/erv1/datasets_tsne_list.txt --model_dir ~/liulab_home/projects/erv/results/erv1 
+
+```
 

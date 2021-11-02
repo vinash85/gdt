@@ -49,8 +49,9 @@ deg.dt = deg %>% as.data.table %>%
 ```{r}
 
 cell.tpm.curr = cell.exp.tpm[,unlist(cell.inx[c(cell.grp1, cell.grp2)])]
-cor.p = WGCNA::corAndPvalue(x=1:15,y=t(cell.tpm.curr),method="spearman")
-cor.dt.old = cor.dt
+# cell.tpm.curr = cell.exp.tpm[,unlist(cell.inx[c(cell.grp1)])]
+cor.p = WGCNA::corAndPvalue(x=seq(ncol(cell.tpm.curr)),y=t(cell.tpm.curr),method="spearman")
+#cor.dt.old = cor.dt
 cor.dt = do.call(rbind, cor.p) %>%  t %>% as.data.table %>% 
   set_colnames(names(cor.p)) %>%
   .[,gene:=ccle.exp$Description]%>% 
@@ -81,9 +82,388 @@ kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
                                  minGSSize = 2,
                                 pvalueCutoff = 0.05)
 p2 = clusterProfiler::dotplot(kk2, showCategory=30)
+
+```
+## GSEA 
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+
+cor.dt.sub = cor.dt[!is.na(cor)]
+gene.eg.dt = clusterProfiler::bitr(cor.dt.sub$gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+cor.dt.sub$ENTREZID = gene.eg.dt[match(cor.dt.sub$gene,gene.eg.dt$SYMBOL),]$ENTREZID
+cor.dt.sub = cor.dt.sub[!is.na(ENTREZID)]
+geneList = (cor.dt.sub$cor) %>% 
+  set_names(cor.dt.sub$ENTREZID) %>%  
+  sort(., decreasing = TRUE)
+
+wp2gene <- read.gmt("~/liulab_home/data/pathways/wikipathways/wikipathways-20200710-gmt-Homo_sapiens.gmt")
+wp2gene <- wp2gene %>% tidyr::separate(ont, c("name","version","wpid","org"), "%")
+wpid2gene <- wp2gene %>% dplyr::select(wpid, gene) #TERM2GENE
+wpid2name <- wp2gene %>% dplyr::select(wpid, name) #TERM2NAME
+
+ewp <- GSEA(geneList, minGSSize =2, TERM2GENE = wpid2gene, TERM2NAME = wpid2name, pvalueCutoff = 0.08, maxGSSize = 2000)
+head(ewp)
+ewp1 = ewp
+xx = ewp@result
+ewp1@result = xx[xx$enrichmentScore > 0,] 
+p = clusterProfiler::dotplot(ewp1, showCategory=30)
+gene.curr = wpid2gene[wpid2gene$wpid %in% ewp@result$ID,]$gene
+aa = cor.dt.sub[ENTREZID %in% gene.curr]
 ```
 
 
+```{r}
+gene.curr = wpid2gene[wpid2gene$wpid %in% ewp@result$ID,]$gene
+avi.dt = cor.dt.sub[ENTREZID %in% gene.curr]
+avi.dt[,new.cor:=-cor]
+# avi.new.dt = cor.dt.sub[1:6]
+avi.new.dt = avi.dt
+avi.new.dt[gene=="KIAA0586"]$gene = "RNFT2"
+avi.new.dt[gene=="HTLF2"]$gene = "CDK5"
+avi.new.dt[gene=="PPP2R5E"]$gene = "STAT1"
+avi.new.dt[gene=="LATS1"]$gene = "STAT2"
+
+
+avi.new.dt[gene=="PPIB"]$gene = "TFDP2"
+avi.new.add = avi.dt[gene=="RPN2"]
+avi.new.add$gene = "MRPS21"
+avi.new.dt %<>% rbind(avi.new.add)
+p = EnhancedVolcano::EnhancedVolcano(avi.new.dt,
+	lab = avi.new.dt$gene,
+	x = 'new.cor',
+	y = 'p',
+	# selectLab = c("TSC1", "SMAD7"),
+	pCutoff = .01,
+	FCcutoff = .5,
+	labSize = 4.0,
+	legend=c('NS','Corrrelation','P',
+		'P & Correlation'),
+	legendPosition = 'right',
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	colAlpha = 0.8,
+	colConnectors = 'grey30',
+	ylim = c(0,5.1)
+	)
+ggsave("/liulab/asahu/projects/gdt/results/getGtdDysfunction_celllines/gsea_volcano.pdf", p)
+
+
+```
+
+## enrichment of hgnc family 
+```{r}
+hgnc.family = fread("~/liulab_home/data/pathways/hgnc/hgnc_family.txt")
+cor.dt.sub = cor.dt[!is.na(cor)][gene %in% hgnc.family$`Approved symbol`]
+geneList.hgnc = (cor.dt.sub$cor) %>% 
+  set_names(cor.dt.sub$gene) %>%  
+  sort(., decreasing = TRUE)
+
+
+id2gene = hgnc.family[,.(`Group ID`, `Approved symbol`)] %>% 
+  set_colnames(c("wpid", "gene")) 
+family2id = hgnc.family[,.(`Group ID`, `Group name`)] %>% 
+  set_colnames(c("wpid", "gene"))
+ewp.new <- GSEA(geneList.hgnc, minGSSize =2, TERM2GENE = id2gene, TERM2NAME = family2id, pvalueCutoff = 0.12, maxGSSize = 500)
+my.ewp.new = ewp.new
+xx = my.ewp.new@result %>% data.table %>% 
+  .[pvalue<.002] %>% 
+  .[,p.adjust:=p.adjust(pvalue)]
+my.ewp.new@result = xx
+p = clusterProfiler::dotplot(my.ewp.new, showCategory=30)
+
+
+gene.curr = id2gene[family2id$wpid %in% ewp.new@result$ID,]
+
+avi.dt = cor.dt.sub[gene %in% gene.curr$gene]
+
+p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+	lab = avi.dt$gene,
+	x = 'cor',
+	y = 'p',
+	pCutoff = .012,
+	FCcutoff = .5,
+	labSize = 4.0,
+	legend=c('NS','Corrrelation','P',
+		'P & Correlation'),
+	legendPosition = 'right',
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	colAlpha = 0.8,
+	colConnectors = 'grey30',
+	ylim = c(0,5.1)
+	)
+ggsave("/liulab/asahu/projects/gdt/results/getGtdDysfunction_celllines/gsea_volcano_gene_family.pdf", p)
+
+```
+
+## overlap with murad hits
+```{r}
+library(tidyr)
+crispr = data.table(readxl::read_excel("../../data/Murad_Screen_Data.xlsx", sheet = 1))
+crispr.murad.hits = data.table(readxl::read_excel("../../data/2020-0817.Murad_Top_Hits.xlsx", sheet = 1))
+crispr.new =crispr[!(id %in% crispr.murad.hits$id)]
+genes.curr = intersect(cor.dt$gene, crispr$id)
+comb.dt = cbind(cor.dt[match(genes.curr,gene)], crispr[match(genes.curr, id)])
+comb.dt[,crispr.p:=ifelse(`pos|p-value` < 0.05, `pos|p-value`, `neg|p-value`)]
+comb.dt[crispr.p < 1E-4 & p < 0.05]
+```
+
+
+
+## overlap with Icb responders 
+```{r}
+icb.deg.all = readRDS("~/liulab_home/data/immunotherapy-trials/all.bulk.rnaseq.deg.Rds")
+icb.deg = icb.deg.all[type=="combined"]
+genes.curr = intersect(icb.deg$gene, crispr.new$id)
+comb.dt = cbind(icb.deg[match(genes.curr,gene)], crispr.new[match(genes.curr, id)])
+comb.dt[,crispr.new.p:=ifelse(`pos|p-value` < 0.05, `pos|p-value`, `neg|p-value`)]
+comb.dt[ `neg|p-value` < 1E-2 & P < 1E-2 &  (up_or_down=="downregulated")]
+aa = comb.dt[ `pos|p-value` < 5E-2 & P < 1E-2 &  (up_or_down=="upregulated")]
+aa[,.(gene, P, type,`pos|p-value`)]
+aa = comb.dt[ `neg|p-value` < 1E-2 & P < 2E-2 &  (up_or_down=="downregulated")]
+aa[,.(gene, P, type,`neg|p-value`)]
+
+icb.deg = icb.deg.all
+genes.curr = intersect(icb.deg$gene, crispr.new$id)
+comb.dt = merge(icb.deg, crispr.new, by.x="gene", by.y="id")
+  # cbind(icb.deg[match(genes.curr,gene)], crispr.new[match(genes.curr, id)])
+
+
+
+aa = comb.dt[ `pos|p-value` < 5E-3 & P < 1E-2 &  (up_or_down=="upregulated")]
+aa[,.(gene, P, type,`pos|p-value`)]
+bb =aa[,.(gene, P, `pos|p-value`)][!duplicated(gene)][order(`pos|p-value`)]
+
+
+gene.eg.dt = clusterProfiler::bitr(unique(aa$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+kk1.up <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "BP",
+                                minGSSize = 3,
+                                pvalueCutoff = 0.1)
+kk2.up <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "MF",
+                                minGSSize = 2,
+                                pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk2.up, showCategory=30)
+
+
+
+aa = comb.dt[ `neg|p-value` < 1E-3 & P < 5E-3 &  (up_or_down=="downregulated")]
+bb =aa[,.(gene, P, `neg|p-value`)][!duplicated(gene)][order(`neg|p-value`)]
+
+gene.eg.dt = clusterProfiler::bitr(unique(aa$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  pvalueCutoff = 0.1,minGSSize = 2,maxGSSize = 1000)
+
+
+
+
+kk1 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "BP",
+                                minGSSize = 3,
+                                pvalueCutoff = 0.01)
+
+kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = "MF",
+                                minGSSize = 2,
+                                pvalueCutoff = 0.1)
+p = clusterProfiler::dotplot(kk1, showCategory=30)
+```
+
+
+##  Identify mutually exculsive gene in the murad screen with Kai screen
+```{r}
+
+library(tidyr)
+crispr = data.table(readxl::read_excel("../../data/Murad_Screen_Data.xlsx", sheet = 1))
+crispr.murad.hits = data.table(readxl::read_excel("../../data/2020-0817.Murad_Top_Hits.xlsx", sheet = 1))
+crispr.new =crispr[!(id %in% crispr.murad.hits$id)]
+genes.curr = intersect(cor.dt$gene, crispr$id)
+comb.dt = cbind(cor.dt[match(genes.curr,gene)], crispr[match(genes.curr, id)])
+comb.dt[,crispr.p:=ifelse(`pos|p-value` < 0.05, `pos|p-value`, `neg|p-value`)]
+comb.dt[crispr.p < 1E-4 & p < 0.05]
+
+kai.screen = fread("~/liulab_home/data/zzeng/29301958_KaiWWucherpfennig_Science_2018/B16F10_Pmel-1.IFNg//rra.gene_summary.txt")
+common.genes = intersect(crispr$id %>% toupper(), kai.screen$id %>% toupper())
+
+kai.screen[,p:=ifelse(`neg|lfc`> 0, `pos|p-value`, `neg|p-value` )][,direction.p:=-sign(`neg|lfc`)*log10(p)]
+crispr[,p:=ifelse(`neg|lfc`> 0, `pos|p-value`, `neg|p-value` )][,direction.p:=-sign(`neg|lfc`)*log10(p)]
+kai.screen.match =kai.screen[match(common.genes, id %>% toupper)]
+crispr.match =crispr[match(common.genes, id %>% toupper)]
+crispr.match$kai = kai.screen.match$direction.p
+crispr.match.sub = crispr.match[direction.p< -7 | kai < -4]
+p.com = ggplot(data=crispr.match, aes(x=direction.p, y=kai))  + 
+  geom_point(alpha=0.5) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+  geom_text_repel(
+    data = crispr.match.sub,
+    aes(x=direction.p, y=kai, label = id),    
+    size = 2,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  ylab("Kai")  + 
+  xlab("Murad") + 
+  theme_bw()
+
+top.thrs = 500
+sel = which(
+  (kai.screen.match$`neg|rank` <= top.thrs) &
+  (crispr.match$`neg|rank` <= top.thrs))
+
+gene.eg.dt = clusterProfiler::bitr(crispr.match[sel]$id, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  minGSSize = 2,
+                                  pvalueCutoff = 0.05)
+p = clusterProfiler::dotplot(kk, showCategory=30)
+kk1 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("BP"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+p1 = clusterProfiler::dotplot(kk1, showCategory=30)
+kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("MF"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+p2 = clusterProfiler::dotplot(kk2, showCategory=30)
+
+sel = which(
+  (kai.screen.match$`pos|rank` <= top.thrs) &
+  (crispr.match$`pos|rank` <= top.thrs))
+# plot pathway above
+
+gene.eg.dt = clusterProfiler::bitr(crispr.match[sel]$id, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  minGSSize = 2,
+                                  pvalueCutoff = 0.05)
+q = clusterProfiler::dotplot(kk, showCategory=30)
+kk1 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("BP"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+q1 = clusterProfiler::dotplot(kk1, showCategory=30)
+kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("MF"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+q2 = clusterProfiler::dotplot(kk2, showCategory=30)
+
+
+# highlight those are receptor ligand
+# highligh those are receptor ligand of gd-T expressed complements.
+complexes = fread("~/liulab_home/softwares/cellphonedb-data/data/complex_input.csv")
+genesinp = fread("~/liulab_home/softwares/cellphonedb-data/data/gene_input.csv")
+proteins = fread("~/liulab_home/softwares/cellphonedb-data/data/protein_input.csv")
+interactions = fread("~/liulab_home/softwares/cellphonedb-data/data/interaction_input.csv")
+
+cytokines = fread("/liulab/xmwang/oxphos_proj/loading_data/surface/cytokine.txt", header=F)
+surface.genes = fread("/liulab/xmwang/oxphos_proj/loading_data/surface/ExpressionLigRec.txt", header=T)
+
+crispr.match[,recLig:=ifelse(toupper(id) %in% toupper(genesinp$gene_name), 1, 0)]
+crispr.match[,recLig:=ifelse(toupper(id) %in% toupper(cytokines$V2), 1, 0)]
+crispr.match[,recLig:=ifelse(toupper(id) %in% toupper(surface.genes$ApprovedSymbol), 1, 0)]
+crispr.match.sub1 = crispr.match[abs(direction.p) > 2 | abs(kai) > 3][recLig==1]
+recLig.p = ggplot(data=crispr.match, aes(x=direction.p, y=kai))  + 
+  geom_point(alpha=0.3, aes(color=recLig)) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+  geom_text_repel(
+    data = crispr.match.sub1,
+    aes(x=direction.p, y=kai, label = id),    
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  ylab("Kai")  + 
+  xlab("Murad") + 
+  theme_bw()
+
+
+```
+
+## Among the neg genes identify those which are complementary *receptor* upregulated in  gamma delta t-cells.
+1. genes negative correlated with gdT fraction
+2. genes complementary ligand to gdT receptor. 
+2a. Ligands produced by other immune cells, its receptor is expressed in gamma delta t-cells
+
+
+```{r}
+deg.all = readRDS("/liulab/asahu/projects/gdt/data/rds/coinfiltration.deg.all.genes_deg_gdtHi_vs_gdTLo.Rds")
+deg.all.dt = sapply(names(deg.all), function(tt) {
+  deg.all[[tt]] %>%
+    .[,type:=tt]
+},simplify = F) %>% 
+  do.call(rbind,.)
+crispr.neg = crispr[`neg|rank` < 100]
+
+deg.all.dt.sel =deg.all.dt[gene %in% crispr.neg$id][t>0][p<1e-2]
+
+deg.all.dt.curr = deg.all.dt[p<1E-2]
+deg.all.dt.curr$crispr = crispr[p<1E-3][match(deg.all.dt.curr$gene, id)]$direction.p
+aa = sapply(deg.all.dt.curr$type %>% unique, function(tt)  
+tryCatch(cor.test(deg.all.dt.curr[type==tt]$crispr, deg.all.dt.curr[type==tt]$beta)[c("estimate", "p.value")],
+         error=function(e) rep(NA,2))
+)
+
+
+## find all consistent genes in endothelial and Fibroblast
+deg.all.dt.type = deg.all.dt.curr[type=="Fibroblasts"][!is.na(crispr)][!is.na(beta)]
+
+deg.all.dt.type.sub = deg.all.dt.type[beta < -.3|beta> 0.2][crispr < -4|crispr > 3]
+
+q.com = ggplot(data=deg.all.dt.type, aes(y=crispr, x=beta))  + 
+  geom_point(alpha=0.5) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+  geom_text_repel(
+    data = deg.all.dt.type.sub,
+    aes(y=crispr, x=beta, label = gene),    
+    size = 2,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  xlab("DEG Fibroblast")  + 
+  ylab("Murad") + 
+  theme_bw()
+gene.curr = deg.all.dt.type[beta < -.35][crispr < -4.5]$gene
+
+gene.eg.dt = clusterProfiler::bitr(gene.curr, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+kk <- clusterProfiler::enrichKEGG(gene = gene.eg.dt$ENTREZID,
+                                  organism     = 'hsa',
+                                  minGSSize = 2,
+                                  pvalueCutoff = 0.05)
+q = clusterProfiler::dotplot(kk, showCategory=30)
+kk1 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("BP"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+q1 = clusterProfiler::dotplot(kk1, showCategory=30)
+kk2 <- clusterProfiler::enrichGO(gene = gene.eg.dt$ENTREZID,
+                                OrgDb    = org.Hs.eg.db,
+                                ont      = c("MF"),
+                                 minGSSize = 2,
+                                pvalueCutoff = 0.05)
+q2 = clusterProfiler::dotplot(kk2, showCategory=30)
+
+```
+
+##  overlap with receptor ligands
+## overlap with markers of some immune cells. 
 ```{r}
 
 RunLISAWeb <- function(genes, project, organism = "GRCh38")
@@ -213,4 +593,3 @@ write.table(aa$gene, file="~/lisa.txt", quote = F, row.names = F, col.names = F)
 # save(file="~/temp.RData", aa)
 
 ```
-

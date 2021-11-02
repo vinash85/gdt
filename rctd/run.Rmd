@@ -1,0 +1,220 @@
+---
+title: "Analyze David Ting data"
+output: html_notebook
+---
+
+
+###
+For reference we need count, cell type and nUMI
+Because we need to useread count, we need only cell annotations of for reference datasets. 
+Most appropiate dataset would be Livnat dataset. But there could be problem in the dataset
+Another option is to use melanoma datasets from TISCH.
+
+## Get (Avi) Livnat dataset
+Check annotations of gamma-delta T-cells, and Melonoma cells 
+
+```{r}
+library(Seurat)
+icb.integrated = readRDS("~/liulab_home/data/single_cell/all.icb.integrated.rds")
+metadata.list = readRDS("/homes6/asahu/liulab_home/data/single_cell//all.icb.integrated.metadata.rds")
+all.meta = icb.integrated@meta.data
+datasets.num = lapply(rownames(all.meta), function(tt) {
+  xx = strsplit(tt,split = "_") %>% unlist
+  xx[length(xx)]
+}
+  ) %>% unlist 
+
+temp = icb.integrated[,which(datasets.num=="13")]#part1.sub50000
+p1=DimPlot(temp, label=T, raster=T)+ NoLegend(); p2=  DimPlot(temp, label=T, group.by = "celltype", raster=T) + NoLegend()
+ggsave("~/liulab_home/projects/gdt/results/rctd/icb.all.integrated.covid.pdf", plot = p1+p2, width = 15, height = 10)
+
+temp = icb.integrated[,which(datasets.num=="9")]#livnat 
+p1=DimPlot(temp, label=T, raster=T)+ NoLegend();
+ggsave("~/liulab_home/projects/gdt/results/rctd/icb.all.integrated.livnat.pdf", plot = p1, width = 15, height = 10)
+
+```
+
+Annotate clusters
+```{r}
+DimPlot(icb.integrated[,icb.integrated$dataset.num==9])
+```
+
+label transfer to all skcm datasets
+
+```{r}
+library(Seurat)
+covid.obj = readRDS("/liulab/asahu/data/covid/scarlettQ/part1.sub50000.Rds")
+
+
+icb.objs = list.files(path="/liulab/zzeng/Tigger/static/data/scICB/", pattern = "*.rds",recursive = T, full.names = T) %>% grep("SKCM", ., value=T)
+
+nonicb.objs = list.files(path="/liulab/zzeng/Tigger/static/data/scNonICB/", pattern = "*.rds",recursive = T, full.names = T)%>% grep("SKCM", ., value=T)
+
+ covid.obj%<>% NormalizeData %>% 
+FindVariableFeatures(selection.method = "vst", 
+        nfeatures = 3000, verbose = FALSE) %>%
+scaleData %>% 
+RunPCA(pc.genes=VariableFeatures(covid.obj@var.genes), num.dim=30)
+
+
+
+scRNA.file="/liulab/zzeng/Tigger/static/data/scNonICB//SKCM_GSE72056/SKCM_GSE72056_res.rds"
+sco.curr = get.sco.label(icb.objs[1])
+
+p = DimPlot(sco, group.by="celltype", label=T) + NoLegend()
+ggsave(sprintf("%s/dimplot_GSE72056.pdf", resultsdir))
+
+all.meta.covid.summ = all.meta.covid[, .N, by=.(celltype,seurat_clusters) ]
+all.meta.covid.summ[,total.celltype:=sum(N),by=.(celltype)]
+all.meta.covid.summ[,total.seurat_clusters:=sum(N),by=.(seurat_clusters)]
+all.meta.covid.summ[,jaccard:=N/(total.celltype+total.seurat_clusters -N),by=.(seurat_clusters)]
+all.meta.covid.summ[,max.jaccard:=max(jaccard), by=.(seurat_clusters)]
+all.meta.covid.summ2=all.meta.covid.summ[max.jaccard==jaccard]
+
+```
+
+### run rctd
+
+Create reference 
+```{r}
+library(RCTD)
+library(Matrix)
+
+counts = sco@assays$RNA@counts %>% round
+# cell_type = sco$predicted.id %>% as.factor
+cell_type = sco$celltype %>% as.factor
+
+cell_type.sel = which(table(cell_type) > 25) %>% names 
+sel.inx = which(cell_type %in%  cell_type.sel)
+cell_type.curr =  cell_type[sel.inx] 
+cell_type.curr = factor(cell_type.curr, levels=unique(cell_type.curr))
+reference <- Reference(counts=counts[,sel.inx], cell_types=cell_type.curr)
+
+## Examine reference object (optional)
+print(dim(reference@counts)) #observe Digital Gene Expression matrix
+table(reference@cell_types) #number of occurences for each cell type
+
+## Save RDS object (optional)
+refdir = "~/liulab_home/projects//gdt//results//rctd/references"
+saveRDS(reference, file.path(refdir,'SKCM_GSE72056.rds'))
+
+```
+
+Read spatial data from David 
+
+```{r}
+source("source.R")
+counts =fread("/liulab/asahu/projects/gdt/data/ting_07092021/rawCounts.tsv")
+meta.data =readxl::read_excel("/liulab/asahu/projects/gdt/data/ting_07092021/Melanoma_20210601_meta.xlsx", sheet = 1)
+meta.data$sample=paste0(meta.data$Sample_ID, ".dcc")
+count.mat = dt2mat(counts)
+count.curr = round(count.mat)
+
+
+sco.spatial = CreateSeuratObject(counts=count.mat)
+sco.spatial = preprocessing.geomx.seurat(sco.spatial,num.dim = 20)
+
+sco.spatial$patients = meta.data$`Slide name`[match(meta.data$sample,colnames(sco.spatial))]
+spatial$tumor_or_immune = meta.data$Comments[match(meta.data$sample,colnames(sco.spatial))]
+
+Idents(sco.spatial) = sco.spatial$patients
+p=Seurat::DimPlot(sco.spatial)
+## using umap as coords
+coords.curr = sco.spatial@reductions$umap@cell.embeddings %>% as.data.frame
+nUMI <- colSums(count.mat) %>%round# In this case, total counts per pixel is nUMI
+
+### Create SpatialRNA object
+puck <- SpatialRNA(coords.curr, count.curr, nUMI)
+
+myRCTD <- create.RCTD(puck, reference, max_cores = 10)
+myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+saveRDS(file="~/liulab_home/projects//gdt//results//rctd/references/sco.spatial.Rds", sco.spatial)
+
+```
+
+Analyze result
+```{r}
+results <- myRCTD@results
+# normalize the cell type proportions to sum to 1.
+norm_weights = sweep(results$weights, 1, rowSums(results$weights), '/') 
+cell_type_names <- myRCTD@cell_type_info$info[[2]] #list of cell type names
+spatialRNA <- myRCTD@spatialRNA
+resultsdir <- '~/liulab_home/projects//gdt//results//rctd/RCTD_Plots' ## you may change this to a more accessible directory on your computer.
+dir.create(resultsdir)
+```
+---
+Below I perform preliminary results
+1. if tumor has higher malignant weights
+2. plot heatmap 
+
+
+```{r}
+avi.dt = data.table(tumor=sco.spatial$tumor_or_immune %>% as.factor, mal.weights=norm_weights[,"Malignant"])
+avi.dt = avi.dt[!is.na(tumor)]
+library(ggpubr)
+p = ggboxplot(avi.dt, x="tumor", y = "mal.weights", add = "dotplot")
+filename = sprintf("%s/tumor_weights.pdf", resultsdir)
+ggsave(file=filename, p)
+library(corrplot)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF",  "#FFFFFF", "#77AADD", "#4477AA") %>% rev)
+ord=sco.spatial$tumor_or_immune %>% order(na.last="FALSE")
+label = sco.spatial$tumor_or_immune[ord]
+label[1] = "control"
+weights.ord = as.matrix(norm_weights)[ord,] %>% t %>% 
+set_colnames(label)
+pdf(sprintf("%s/weights_matrix.pdf", resultsdir), width=16, height=6)
+corrplot(weights.ord, method="color", col=col(200),
+         # type="upper",
+         # order="hclust",
+         is.corr = F,
+         # addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=90, #Text label color and rotation
+         tl.cex = 0.8,
+         # Combine with significance
+         # p.mat = p.mat, sig.level = 0.01, insig = "blank",
+         # hide correlation coefficient on the principal diagonal
+         diag=T
+         )
+dev.off()
+```
+
+
+plot curated annotation 
+```r
+  resultsdir2 <- '~/liulab_home/projects//gdt//results//rctd/RCTD_Plots' ## you may change this to a more accessible directory on your computer.
+puck.immune = get.spatial.obj(sco.spatial[,sco.spatial$tumor_or_immune=="Immune"])
+# out = get.RTCD.results(sco=sco, annotation="assign.ident", resultsdir=sprintf("%s/tisch", resultsdir2))
+# out.level1_annot = get.RTCD.results(sco=sco, annotation="assign.level1_anno", resultsdir=sprintf("%s/level1_anno", resultsdir2))
+out.assign.curated = get.RTCD.results(sco=sco, rctd.spatial= puck, annotation="assign.curated", resultsdir=sprintf("%s/assign.curated", resultsdir2))
+out.predicted.id = get.RTCD.results(sco=sco, rctd.spatial= puck, annotation="predicted.id", resultsdir=sprintf("%s/predicted.id", resultsdir2))
+```
+
+
+
+```r
+run.reference = function(resultsdir2, reffile, immune.only=F){
+  source("source.R")
+  dir.create(resultsdir2)
+  sco.spatial.curr = sco.spatial
+  if(immune.only) sco.spatial.curr = sco.spatial[,sco.spatial$tumor_or_immune=="Immune"]
+  puck.immune = get.spatial.obj(sco.spatial.curr)
+
+  sco = get.sco.label(reffile)
+
+try({
+  out.assign.paper = get.RTCD.results(
+    sco=sco, rctd.spatial= puck, annotation="assign.paper", resultsdir=sprintf("%s/assign.paper", resultsdir2), tumor_or_immune = sco.spatial.curr$tumor_or_immune)
+})
+try({
+  out.assign.curated = get.RTCD.results(sco=sco, rctd.spatial= puck, annotation="assign.curated", resultsdir=sprintf("%s/assign.curated", resultsdir2), tumor_or_immune = sco.spatial.curr$tumor_or_immune)
+})
+try({out.predicted.id = get.RTCD.results(sco=sco, rctd.spatial= puck, annotation="predicted.id", resultsdir=sprintf("%s/predicted.id", resultsdir2), tumor_or_immune = sco.spatial.curr$tumor_or_immune)
+})
+
+sco
+}
+
+reffile = "/liulab/zzeng/Tigger/static/data/scNonICB//SKCM_GSE123139/SKCM_GSE123139_res.rds"
+resultsdir2 <- '~/liulab_home/projects//gdt//results//rctd/SKCM_GSE123139' 
+sco.SKCM_GSE123139= run.reference(resultsdir2=resultsdir2,reffile, immune.only=T)
+```

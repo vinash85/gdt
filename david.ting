@@ -1,0 +1,67 @@
+---
+title: "Analysis of david ting June 2021 data"
+output: html_notebook
+---
+
+
+## Read the counts and perform the single cell RNA analysis 
+1. Find markers of ESRRA 
+2. Find if there are gamma delta T cells
+3. Find 
+
+## functions
+```{r}
+#' convert data.table to matrix assumes first column is rownames
+#'
+#' @param dt  data.table 
+#'
+#' @return matrix
+#' @export
+#'
+#' @examples
+dt2mat <- function(dt) {
+  dt[,-1, with=F] %>% as.matrix %>% 
+    set_rownames(unlist(dt[,1]) )
+}
+
+preprocessing.geomx.seurat = function (sco, num.dim = 50, nfeatures=500) 
+{
+  require(Seurat)
+    sco %<>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", 
+        nfeatures = nfeatures) %>% ScaleData(verbose = FALSE)
+    sco %>% RunPCA(pc.genes = sco@var.features, npcs = num.dim, 
+        verbose = FALSE) %>% RunUMAP(reduction = "pca", dims = seq(num.dim)) %>% 
+        RunTSNE(reduction = "pca", dims = seq(num.dim)) %>% FindNeighbors(reduction = "pca", 
+        dims = seq(num.dim)) %>% FindClusters(resolution = 0.5) %>% 
+        identity()
+}
+```
+
+```{r}
+counts =fread("/liulab/asahu/projects/gdt/data/ting_07092021/rawCounts.tsv")
+meta.data =readxl::read_excel("/liulab/asahu/projects/gdt/data/ting_07092021/Melanoma_20210601_meta.xlsx", sheet = 1)
+meta.data$sample=paste0(meta.data$Sample_ID, ".dcc")
+count.mat = dt2mat(counts)
+library(Seurat)
+sco = CreateSeuratObject(counts=count.mat)
+sco = preprocessing.geomx.seurat(sco,num.dim = 20)
+
+sco$patients = meta.data$`Slide name`[match(meta.data$sample,colnames(sco))]
+sco$tumor_or_immune = meta.data$Comments[match(meta.data$sample,colnames(sco))]
+
+Idents(sco) = sco$patients
+Seurat::DimPlot(sco)
+```
+
+```{r}
+
+Idents(sco) = sco$tumor_or_immune
+Seurat::DimPlot(sco)
+```
+
+## subtype analysis
+```{r}
+
+
+```
+
