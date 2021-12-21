@@ -1,0 +1,722 @@
+---
+title: "Determine co-localization in scRNA using seurat intergration"
+output: html_notebook
+---
+
+## Summary of script  
+1. Read seurat object
+2. determine patient information is uniformly available 
+3. If not 2, then read gse meta data to determine the infomation.
+4. Summarize the annotation, and gd-T alleles
+5. If Trgd  is absent use the blood atlas as marker 
+6. Try w/o annotation
+
+```{r}
+files = list.files(pattern="*.res.rds", full.names = T, path = "~/liulab_home/data/links/data/", recursive = T)
+nonicb.obj1 = list.files(path="/liulab/zzeng/Tigger/static/data/scNonICB/", pattern = "*.rds",recursive = T, full.names = T)
+
+```
+
+## Perform linear mixed model 
+
+```{r}
+library(parallel)
+library(nlme)
+library(Matrix)
+extract_nmle_table <- function (m1){
+    mod = summary(m1)
+    beta <- m1$coefficients$fixed[2] #$fixed is not needed
+    se <- m1$varFix[2]
+    t <- beta/se
+    p<- anova(m1)[2,4]
+    table=data.frame(cbind(beta,se,t,p))
+    return(table)
+}
+            
+eval.nlme = function(data.dt){
+    tryCatch(
+        {
+            data.dt = data.dt[!is.na(y)]
+            data.dt$x %<>% avinash::znorm()
+            data.dt$y %<>% avinash::znorm()
+            m1 <- lme(y~ x, random=~1|dataset, data=data.dt)
+            extract_nmle_table(m1)
+        },error=  function(e) rep(NA,4))
+}
+
+perform.lmer.coinfiltration =  function(dt.x, dt.y, label = NULL) {
+  dt.x$y = dt.y[match(dt.x$patient.new, patient.new)]$frac 
+  dt.x[,x:=frac]
+  out = dt.x[,.(list(eval.nlme(.SD))), by=clust]
+  do.call(rbind, out$V1) %>% data.table %>% 
+    .[,clust:=out$clust]%>%
+    .[order(p)] %>% 
+    .[,label:=label]
+}
+calcualte.immune.fraction.davis = function(meta.data){
+  if(is.null(meta.data$patient))  return(NULL)
+  meta.data %<>% as.data.table
+  col.sel = "assign.level3_anno" 
+  meta.data[,total.count:=.N, by=patient]
+  sapply( col.sel, function(tt) meta.data[,.(frac=.N/unique(total.count)),by=c("patient", tt)], 
+                USE.NAMES=T, simplify = F)
+}
+
+
+create.psuedobulk <- function(exp.mat, labels) {
+  dt1 = data.table(V1=labels)
+  one.hot = mltools::one_hot(dt1) %>% as.matrix
+  one.hot %>% colMeans %>% 
+    sweep(one.hot,., MARGIN = 2, FUN = "/")
+  out = exp.mat %*% one.hot
+  out %>% set_colnames(gsub("V1_", colnames(one.hot), replacement = ""))
+}
+```
+
+## Select genes to store
+
+```{r}
+
+get.synonym = function(gene){
+  geneSynonym::humanSyno(gene,  caseSensitive = F) %>% 
+  unlist %>% toupper 
+}
+
+
+tgd.specific.genes = c("TMEM132C", "GALNT18", "FBXO39", "NFASC", "HNF4G","KRT84", "CYP2C8", "LIM2", "TFCP2L1", 
+	"AC012531.3", "KLKB1", "MFAP2")
+gdt.blood.marker = fread("~/liulab_home/data/single_cell/markers/./blood_cell_category_rna_gdT-cell_Cell.tsv")
+gdt.secreted = c("GM-CSF", "GZMB", "IFNG", "IL4", "IL5", "IL17A", "PRF1", "TNFA")
+gdt.secreted.pruned = c("CSF2", "GZMB", "IFNG", "IL4", "IL5", "IL17A", "PRF1", "TNF")
+gdt.surface=c("CD5", "CD16", "CD27", "CD28", "CD45RA", "CD56", "CD57", "CD62L", "CD69", "CD70H", "CD107a", "NKG2D")
+gdt.surface=c("CD5", "FCGR3A", "FCGR3B", "CD27", "CD28", "CD3G", "NCAM1", "B3GAT1", "SELL", "CD69", "CD70", "LAMP1", "KLRK1")
+
+all.genes = c(tgd.specific.genes, gdt.blood.marker, gdt.secreted, gdt.secreted.pruned, gdt.surface, gdt.surface) %>% unique()
+all.genes = all.genes %>% get.synonym() 
+```
+
+
+Get transferred label of datasets 
+```{r}
+get.dataset.cluster <- function(obj.file, transfer.label.files) {
+  obj.name = basename(obj.file)
+  cluster = NULL 
+ transfer.label.file =  grep(obj.name, transfer.label.files, value=T)
+  if(length(transfer.label.file) > 0) {
+    readRDS(transfer.label.file)$predicted.id  -> cluster
+  }
+ cluster 
+ }
+
+transfer.label.files = list.files("~/liulab_home/data/single_cell/transfer.labels.datasets", full.names = T)
+dataset.label = lapply( nonicb.obj1, get.dataset.cluster, transfer.label.files =transfer.label.files )
+icb.seurat_cluster = readRDS("/homes6/asahu/liulab_home/data/single_cell//all.icb.integrated/seurat_cluster.rds")
+```
+
+
+## Read annotation from TISCH 
+```{r}
+library(Seurat)
+exps = mclapply(files, function(file){
+  sco = readRDS(file)
+  label = file %>% basename %>% gsub("_res.rds", "", .)
+  genes.curr = rownames(sco$RNA)
+  tr.alleles = grep("^TR[ABDG][VDJC]", genes.curr, value=T)
+  tr.alleles = c(tr.alleles, "CD8A", "CD3E", "CD3G") 
+  genes.sel = which(genes.curr %in% c( tr.alleles, all.genes))
+  list(label =label, meta.data = sco$RNA@meta.data, exp = sco$RNA@assays$RNA@data[genes.sel,])
+}, mc.cores = 48
+)
+names.exps = sapply(exps, function(tt) tt$label)
+names(exps) = names.exps
+
+```
+
+
+## Mean of alleles 
+Using ab-T cells as control comapre gdT interaction. I am using all mean of alleles of gamma delta
+
+```{r}
+
+calculate.immune.fraction = function(meta.data){
+  if(is.null(meta.data$patient))  return(NULL)
+  meta.data %<>% as.data.table
+  col.sel = grep("assign", colnames(meta.data), value  =T )
+  meta.data[,total.count:=.N, by=patient]
+  sapply( col.sel, function(tt) meta.data[,.(frac=.N/unique(total.count)),by=c("patient", tt)], 
+                USE.NAMES=T, simplify = F)
+}
+
+#' Calculate gdT score based on different gene signature
+#'
+#' @param object list with meta.data and exp  
+#' @param genes list of genes (default:NULL)
+#' @param grep.genes pattern of grepping genes (default:NULL)
+#' @param genes.weight list of genes weight (default:NULL)
+#'
+#' @return
+#' @export
+#'
+#' @examples
+calculate.gdT.score = function(object, genes = NULL, grep.genes = NULL, genes.weight =NULL){
+  exp.curr = object$exp
+  patient = object$meta.data$patient
+  label = object$label
+  if(is.null(patient)) return(NULL) 
+  if(!is.null(grep.genes)) {
+    genes %<>% c(., grep(grep.genes, rownames(exp.curr), value=T) )
+  }
+   genes %<>% intersect(rownames(exp.curr))
+  if(length(genes)==0) return(NULL)
+  weights.curr = matrix(0, nrow=1, ncol=nrow(exp.curr)) %>% 
+    set_colnames(rownames(exp.curr))
+  weights.curr[,genes] =1
+  if(!is.null(genes.weight)){
+    genes.weight = genes.weight[intersect(names(genes.weight), rownames(exp.curr))]
+    weights.curr[,names(genes.weight)] = unlist(genes.weight)
+  }
+  weights.curr = weights.curr/sum(weights.curr)
+   cell.score = weights.curr %*% exp.curr %>% as.matrix %>% c()
+  data.table(cell.score=cell.score, patient=patient) %>% 
+    .[,.(patient.score=mean(cell.score)), by=patient] %>% 
+    .[,dataset:=label] %>% 
+    .[,patient.new:=paste(patient, label, sep = ":")]
+}
+```
+
+
+```{r}
+abT.scores =  mclapply(exps, function(tt) calculate.gdT.score(tt, grep.genes = "^TR[AB]"), mc.cores = 48)
+gdT.scores =  mclapply(exps, function(tt) calculate.gdT.score(tt, grep.genes = "^TR[GD]"), mc.cores = 48)
+abT.scores = do.call(rbind, abT.scores)
+gdT.scores = do.call(rbind, gdT.scores)
+cor.test(temp1$patient.score, temp2$patient.score)
+aa = merge(temp1, temp2, by="patient")
+
+immune.fracs = mclapply(exps, function(tt) calcualte.immune.fraction(tt$meta.data), mc.cores = 48)
+## find unique annotation mechanism 
+annot.mechanism = sapply(immune.fracs, names) %>% unlist %>% unique 
+agg.immune.fracs = list()
+for (ii in seq_along(immune.fracs)) {
+  immune.frac = immune.fracs[[ii]]
+  label.curr = exps[[ii]]$label 
+  for (tt in seq_along(immune.frac)) {
+    annot.curr = names(immune.frac)[[tt]]
+    setnames(immune.frac[[tt]], 2, "clust")
+    immune.frac[[tt]][,dataset:=label.curr][,annot:=annot.curr][,patient.new:=paste(patient, label.curr, sep = ":")]
+    agg.immune.fracs[[annot.curr]] %<>%  rbind(., immune.frac[[tt]])
+  }
+}
+# for (ii in seq_along(agg.immune.fracs)) {
+#    agg.immune.fracs[[ii]] %<>% dcast(., patient.new  ~ clust, value.var = "frac")
+# }
+
+```
+
+
+```{r}
+agg.immune.fracs.old = agg.immune.fracs
+agg.immune.fracs.new = agg.immune.fracs
+agg.immune.fracs.new$assign.score = NULL
+abT.coinfiltration = lapply(names(agg.immune.fracs.new),  function(tt) perform.lmer.coinfiltration(dt.x=agg.immune.fracs[[tt]], dt.y=abT.scores[,frac:=patient.score], label=tt))
+abT.coinfiltration %<>% do.call(rbind,.) %>% 
+  .[order(p)]
+gdT.coinfiltration = lapply(names(agg.immune.fracs.new),  function(tt) perform.lmer.coinfiltration(dt.x=agg.immune.fracs[[tt]], dt.y=gdT.scores[,frac:=patient.score], label=tt))
+gdT.coinfiltration %<>% do.call(rbind,.) %>% 
+  .[order(p)]
+
+# aa = lapply(agg.immune.fracs, function(tt) any(is.numeric(tt$clust)))
+
+coinfiltration.dt = merge(abT.coinfiltration %>% as.data.frame(), gdT.coinfiltration %>% as.data.frame(), by=c("clust", "label"), suffixes = c(".ab",".gd")) %>% as.data.table()
+get.sign.log = function(tt){
+  sign(tt)*log(abs(tt))
+} 
+coinfiltration.dt$t.ab %<>% get.sign.log
+coinfiltration.dt$t.gd %<>% get.sign.log
+coinfiltration.dt[,logp.ab:=-sign(t.ab)*log10(p.ab)] 
+coinfiltration.dt[,logp.gd:=-sign(t.gd)*log10(p.gd)] 
+coinfiltration.dt.sub = coinfiltration.dt[which((abs(logp.ab) > 4) | (abs(logp.gd) > 2.5))]
+p.com = ggplot(data=coinfiltration.dt, aes(x=logp.ab, y=logp.gd))  + 
+  geom_point(alpha=0.5) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+  geom_text_repel(
+    data = coinfiltration.dt.sub,
+    aes(x=logp.ab, y=logp.gd, label = clust),    
+    size = 2,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  ylab("gamma-delta association")  + 
+  xlab("alpha-beta association") + 
+  theme_bw()
+ggsave("/liulab/asahu/projects/gdt/results/.figs/coinfiltration.gd.ab.pdf", p.com)
+
+
+change.dt =coinfiltration.dt%>% 
+  .[,clust:=as.character(clust)]
+change.dt[,clust:=ifelse(clust=="Immune cells", "Memory_B_cells", change.dt$clust)]
+change.dt[,clust:=ifelse(clust=="Microglia", "Fibroblasts", change.dt$clust)]
+p = EnhancedVolcano::EnhancedVolcano(change.dt,
+	lab = change.dt$clust,
+	x = 'beta.gd',
+	y = 'p.gd',
+	pCutoff = 1E-2,
+	FCcutoff = .01,
+	labSize = 4.0,
+	legend=c('NS','Log (base 2) fold-change','Adj.P value',
+		'Adj.P value & Log (base 2) fold-change'),
+	legendPosition = 'right',
+	# legendLabSize = 8,
+	# legendIconSize = 4.0,
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+
+
+```
+## TRDV1 and TRDV2
+```{r}
+get.coinfiltration = function(genes = NULL, grep.genes=NULL, agg.immune.fracs = agg.immune.fracs){
+  pattern.scores =  mclapply(exps, function(tt) calculate.gdT.score(tt, genes= genes, grep.genes = grep.genes), mc.cores = 48)
+  pattern.scores = do.call(rbind, pattern.scores)
+  pattern.coinfiltration = lapply(names(agg.immune.fracs.new),  function(tt)
+    tryCatch( perform.lmer.coinfiltration(dt.x=agg.immune.fracs[[tt]], dt.y=pattern.scores[,frac:=patient.score], label=tt),
+              error =function(e) NULL
+                                  ))
+  pattern.coinfiltration %<>% do.call(rbind,.) %>% 
+    .[order(p)]
+  list(pattern.coinfiltration = pattern.coinfiltration, pattern.scores =pattern.scores)
+}
+
+tdgv1.coinfiltration = get.coinfiltration(genes=c("TRDV1", "TRGC2"))
+tdgv2.coinfiltration = get.coinfiltration(genes=c("TRDV2", "TRGC1"))
+
+
+# for ( ii in seq_along(exps)) {
+#   tt = exps[[ii]]
+#  pattern.scores = calculate.gdT.score(tt, genes= genes, grep.genes = grep.genes)
+# }
+```
+## Create a singleR annotation on pseudobulk. 
+
+## Davis annotation
+## Read annotations from Davis 
+
+```{r}
+library(Seurat)
+files = list.files(pattern="rename_obj.rds", full.names = T, path = "/liulab/zzeng/Tigger/static", recursive = T)
+metadata.davis = mclapply(files, function(file){
+  sco = readRDS(file)
+  label = file %>% dirname %>% basename 
+  list(label =label, meta.data = sco$RNA@meta.data)
+}, mc.cores = 48
+)
+names.metadata.davis = sapply(metadata.davis, function(tt) tt$label)
+names(metadata.davis) = names.metadata.davis
+
+
+davis.immune.fracs = mclapply(metadata.davis, function(tt) calcualte.immune.fraction.davis(tt$meta.data), mc.cores = 48)
+
+agg.davis.immune.fracs = list()
+for (ii in seq_along(davis.immune.fracs)) {
+  immune.frac = davis.immune.fracs[[ii]]
+  label.curr = metadata.davis[[ii]]$label 
+  for (tt in seq_along(immune.frac)) {
+    annot.curr = names(immune.frac)[[tt]]
+    setnames(immune.frac[[tt]], 2, "clust")
+    immune.frac[[tt]][,dataset:=label.curr][,annot:=annot.curr][,patient.new:=paste(patient, label.curr, sep = ":")]
+    agg.davis.immune.fracs[[annot.curr]] %<>%  rbind(., immune.frac[[tt]])
+  }
+}
+
+
+davis.gdT.coinfiltration = lapply(names(agg.davis.immune.fracs),  function(tt) perform.lmer.coinfiltration(dt.x=agg.davis.immune.fracs[[tt]], dt.y=gdT.scores[,frac:=patient.score], label=tt))
+davis.abT.coinfiltration = lapply(names(agg.davis.immune.fracs),  function(tt) perform.lmer.coinfiltration(dt.x=agg.davis.immune.fracs[[tt]], dt.y=abT.scores[,frac:=patient.score], label=tt))
+```
+
+
+## Remove the cells that are positive of gdT and recalculate the fractions.
+
+
+```{r}
+metadata.davis.nogdt = list()
+for (tt in names(metadata.davis)) {
+  metadata.davis.curr = metadata.davis[[tt]]
+  exps.curr = exps[[tt]]
+  gdt.alleles = grep("TR[GD]",rownames(exps.curr$exp))
+  try({
+  inx =which( colSums(exps.curr$exp[gdt.alleles,,drop=F],na.rm = T) == 0)
+  cell.inx = rownames(exps.curr$meta.data)[inx]
+  metadata.davis.curr$meta.data = metadata.davis.curr$meta.data[cell.inx,]
+  })
+  metadata.davis.nogdt[[tt]] = metadata.davis.curr
+}
+
+davis.nogdt.immune.fracs = mclapply(metadata.davis.nogdt, function(tt) calcualte.immune.fraction.davis(tt$meta.data), mc.cores = 48)
+
+agg.davis.nogdt.immune.fracs = list()
+for (ii in seq_along(davis.nogdt.immune.fracs)) {
+  immune.frac = davis.nogdt.immune.fracs[[ii]]
+  label.curr = metadata.davis.nogdt[[ii]]$label 
+  for (tt in seq_along(immune.frac)) {
+    annot.curr = names(immune.frac)[[tt]]
+    setnames(immune.frac[[tt]], 2, "clust")
+    immune.frac[[tt]][,dataset:=label.curr][,annot:=annot.curr][,patient.new:=paste(patient, label.curr, sep = ":")]
+    agg.davis.nogdt.immune.fracs[[annot.curr]] %<>%  rbind(., immune.frac[[tt]])
+  }
+}
+
+
+davis.nogdt.gdT.coinfiltration = lapply(names(agg.davis.nogdt.immune.fracs),  function(tt) perform.lmer.coinfiltration(dt.x=agg.davis.nogdt.immune.fracs[[tt]], dt.y=gdT.scores[,frac:=patient.score], label=tt))
+davis.nogdt.abT.coinfiltration = lapply(names(agg.davis.nogdt.immune.fracs),  function(tt) perform.lmer.coinfiltration(dt.x=agg.davis.nogdt.immune.fracs[[tt]], dt.y=abT.scores[,frac:=patient.score], label=tt))
+
+davis.tdgv1.coinfiltration = get.coinfiltration(genes=c("TRDV1", "TRGC2"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.tdgv2.coinfiltration = get.coinfiltration(genes=c("TRDV2", "TRGC1"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.tdc.coinfiltration = get.coinfiltration(genes=c("TRDC"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.tdv1.coinfiltration = get.coinfiltration(genes=c("TRDV1"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.tdv2.coinfiltration = get.coinfiltration(genes=c("TRDV2"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.TRGC1.coinfiltration = get.coinfiltration(genes=c("TRGC1"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+davis.TRGC2.coinfiltration = get.coinfiltration(genes=c("TRGC2"), agg.immune.fracs = agg.davis.nogdt.immune.fracs)
+
+
+tdgv1.coinfiltration = get.coinfiltration(genes=c("TRDV1", "TRGC2"), agg.immune.fracs = agg.davis.immune.fracs)
+tdgv2.coinfiltration = get.coinfiltration(genes=c("TRDV2", "TRGC1"), agg.immune.fracs = agg.davis.immune.fracs)
+tdc.coinfiltration = get.coinfiltration(genes=c("TRDC"), agg.immune.fracs = agg.davis.immune.fracs)
+tdv1.coinfiltration = get.coinfiltration(genes=c("TRDV1"), agg.immune.fracs = agg.davis.immune.fracs)
+tdv2.coinfiltration = get.coinfiltration(genes=c("TRDV2"), agg.immune.fracs = agg.davis.immune.fracs)
+TRGC1.coinfiltration = get.coinfiltration(genes=c("TRGC1"), agg.immune.fracs = agg.davis.immune.fracs)
+TRGC2.coinfiltration = get.coinfiltration(genes=c("TRGC2"), agg.immune.fracs = agg.davis.immune.fracs)
+out1 = grep("coinfiltration", ls(), value=T) %>% 
+  sapply(., function(tt) {
+    uu = eval(as.symbol(tt))
+    tryCatch(uu$pattern.coinfiltration[clust=="CD8Tex"][,type:=tt], 
+             error=function(e) NULL)
+  }, simplify = F) %>% do.call(rbind,.)
+
+```
+
+## CD3+ CD8- CD4- population
+
+```{r}
+library(Seurat)
+files = list.files(pattern="rename_obj.rds", full.names = T, path = "/liulab/zzeng/Tigger/static/", recursive = T)
+metadata.davis = mclapply(files, function(file){
+  sco = readRDS(file)
+  genes.curr = rownames(sco$RNA)
+  tr.alleles = grep("^TR[ABDG][VDJC]", genes.curr, value=T)
+  tr.alleles = c(tr.alleles, "CD8A", "CD3E", "CD3G", "CD4", "NKG7","KLRK1") 
+  label = file %>% dirname %>% basename 
+  genes.sel = which(genes.curr %in% c( tr.alleles, all.genes))
+  list(label =label, meta.data = sco$RNA@meta.data, exp = sco$RNA@assays$RNA@data[genes.sel,])
+}, mc.cores = 48
+)
+names.metadata.davis = sapply(metadata.davis, function(tt) tt$label)
+names(metadata.davis) = names.metadata.davis
+
+all.annots = sapply(metadata.davis, function(tt) tt$meta.data$assign.level3_anno)%>% unlist %>% unique
+all.tcell.clusters = c("TMKI67", "CD8Tem",            
+"CD8Tex",
+"CD4Tnaive","CD8Teff",
+"Th17",
+"CD8Tcm",
+"Tfh",
+"Th1",
+"Treg",
+"CD8Tnaive","CD4Tn","CD8T",
+"CD4conv")
+
+get.gdt.trgp.cd3p.cd8n.cd4n = function(metadata){
+  gdt.fracs = NULL
+  # browser()
+  try({
+    
+  if(all(c("CD4", "CD8A") %in% rownames(metadata$exp))){
+    tr.alleles = grep("TR[GD][VDC][0-9]*$", rownames(metadata$exp), value=T)
+    trgp = metadata$exp[tr.alleles, ,drop=F] %>% colSums 
+    thrs = quantile(trgp, probs=0.6)
+    metadata$trgp = trgp > thrs
+    cd8n.cd4n = tryCatch({
+      colSums(metadata$exp[c("CD4", "CD8A"), ] == 0) ==2
+      }, error=function(e) NA)
+    cd3p = metadata$exp[rownames(metadata$exp) %in% c("CD3E", "CD3G"), ,drop=F] 
+    if(nrow(cd3p) > 1){
+      cd3p = colSums(cd3p > 0)
+    }
+    cd3p = cd3p > 0
+    metadata$meta.data$gdt.type1 = tryCatch(cd8n.cd4n & cd3p &  metadata$trgp, 
+                                            error=function(e) NULL)
+    tcell.clusters = metadata$meta.data$assign.level3_anno %in% all.tcell.clusters
+    metadata$meta.data$gdt.type2 = cd8n.cd4n & tcell.clusters & metadata$trgp
+    metadata$meta.data$gdt.type12 = metadata$meta.data$gdt.type1 | metadata$meta.data$gdt.type2
+    
+    meta.data = metadata$meta.data %>% as.data.table
+    col.sel = c("gdt.type1", "gdt.type2", "gdt.type12") 
+    meta.data[,total.count:=.N, by=patient]
+    gdt.fracs = sapply( col.sel, function(tt) meta.data[,.(frac=sum(get(tt))/unique(total.count), label=metadata$label),by=c("patient")], 
+                        USE.NAMES=T, simplify = F)
+  }
+  })
+  list(label =metadata$label, meta.data = metadata$meta.data, exp = metadata$exp, gdt.fracs=gdt.fracs)
+}
+
+
+metadata.davis  = sapply(metadata.davis, get.gdt.trgp.cd3p.cd8n.cd4n, simplify = F)
+sapply(metadata.davis, function(tt) is.null(tt$gdt.fracs) )
+
+metadata.davis.nogdt2 = list()
+for (tt in names(metadata.davis)) {
+  metadata.davis.curr = metadata.davis[[tt]]
+  try({
+     metadata.davis.curr$meta.data  =  metadata.davis.curr$meta.data[!metadata.davis.curr$meta.data$gdt.type12,]
+  })
+  metadata.davis.nogdt2[[tt]] = metadata.davis.curr
+}
+
+davis.nogdt2.immune.fracs = mclapply(metadata.davis.nogdt2, function(tt) calcualte.immune.fraction.davis(tt$meta.data), mc.cores = 48)
+
+agg.davis.nogdt2.immune.fracs = list()
+for (ii in seq_along(davis.nogdt2.immune.fracs)) {
+  immune.frac = davis.nogdt2.immune.fracs[[ii]]
+  label.curr = metadata.davis.nogdt2[[ii]]$label 
+  for (tt in seq_along(immune.frac)) {
+    annot.curr = names(immune.frac)[[tt]]
+    setnames(immune.frac[[tt]], 2, "clust")
+    immune.frac[[tt]][,dataset:=label.curr][,annot:=annot.curr][,patient.new:=paste(patient, label.curr, sep = ":")]
+    agg.davis.nogdt2.immune.fracs[[annot.curr]] %<>%  rbind(., immune.frac[[tt]])
+  }
+}
+
+davis.trgp.cd3p.cd8n.cd4n.coinfiltration = lapply(c("gdt.type1", "gdt.type2", "gdt.type12"),  function(tt){
+  temp = lapply(metadata.davis, function(uu) {
+    out = uu[["gdt.fracs"]][[tt]]
+    if(!is.null(out)) out=out[,.(patient, frac, label)]
+    out
+  }
+    ) 
+  # browser()
+  temp %<>% 
+    do.call(rbind,.)
+  temp[,patient.new:=paste(patient,label,sep=":")]
+  
+  perform.lmer.coinfiltration(dt.x=agg.davis.nogdt2.immune.fracs$assign.level3_anno, dt.y=temp, label=tt)
+} )
+
+names.curr = c("gdt.type1", "gdt.type2", "gdt.type12")
+for (ii in seq_along(davis.trgp.cd3p.cd8n.cd4n.coinfiltration)) {
+avi.dt = davis.trgp.cd3p.cd8n.cd4n.coinfiltration[[ii]]
+p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+	lab = avi.dt$clust,
+	x = 'beta',
+	y = 'p',
+	pCutoff = 1E-2,
+	FCcutoff = .01,
+	labSize = 4.0,
+	legend=c('NS','beta','P',
+		'P & beta'),
+	legendPosition = 'right',
+	drawConnectors = TRUE,
+	widthConnectors = 0.2,
+	colAlpha = 0.8,
+	colConnectors = 'grey30'
+	)
+ggsave(sprintf("/liulab/asahu/projects/gdt/results/coinfiltration/%s.pdf", names.curr[[ii]]), p)
+}
+
+```
+
+---
+
+## Gene differential in specific cluster
+
+```{r}
+library(ggplot2)
+library(parallel)
+library(Seurat)
+psuedobulk.clust.exps = mclapply(files, function(file){
+  sco = readRDS(file)
+  # browser()
+  genes.curr = rownames(sco$RNA)
+  label = file %>% dirname %>% basename 
+   meta.data = sco$RNA@meta.data
+  clusters.curr = meta.data$assign.level3_anno %>% unique
+  psuedobulk.clust = NULL 
+  try({
+   nogdt.inx = !(metadata.davis[[label]]$meta.data$gdt.type12)
+    psuedobulk.clust = sapply(clusters.curr, function(tt){
+      inx = which((meta.data$assign.level3_anno == tt) & nogdt.inx)
+      create.psuedobulk(sco$RNA@assays$RNA@data[,inx], labels = sco$RNA@meta.data$patient[inx])
+    }, simplify=T) %>% 
+      set_names(clusters.curr)
+  }
+  )
+  list(label =label, meta.data = sco$RNA@meta.data, psuedobulk.clust = psuedobulk.clust, genes = genes.curr)
+}, mc.cores = 60
+)
+names(psuedobulk.clust.exps) = sapply(psuedobulk.clust.exps, function(tt) tt$label)
+
+
+
+davis.gdt.type12  = lapply(metadata.davis, function(uu) {
+    out = uu[["gdt.fracs"]][["gdt.type12"]]
+    if(!is.null(out)) out=out[,.(patient, frac, label)]
+    out
+  }) %>% do.call(rbind,.) %>% 
+  .[,patient.new:=paste(patient, label, sep=":")]
+
+all.genes = sapply(psuedobulk.clust.exps, function(tt) tt$genes) %>% unlist %>% unique
+all.clusts = sapply(psuedobulk.clust.exps, function(tt) names(tt$psuedobulk.clust)) %>% unlist %>% unique
+
+
+
+davis.exp.matched = sapply(all.clusts, function(clust.curr){ 
+  out = matrix(NA, nrow=length(all.genes), ncol= length(davis.gdt.type12$patient.new),
+               dimnames = list(all.genes, davis.gdt.type12$patient.new))
+  
+  for( label.curr in unique(davis.gdt.type12$label)){
+    psuedobulk.curr = psuedobulk.clust.exps[[label.curr]]$psuedobulk.clust[[clust.curr]]
+    if(!is.null(psuedobulk.curr)){
+      patient.new.curr = paste(colnames(psuedobulk.curr), label.curr, sep=":")
+      # browser()
+      out[rownames(psuedobulk.curr),patient.new.curr] = psuedobulk.curr %>% as.matrix
+    }
+    
+  }
+  out
+},USE.NAMES = T, simplify = F)
+
+library(clusterProfiler)
+wp2gene <- read.gmt("~/liulab_home/data/pathways/wikipathways/wikipathways-20200710-gmt-Homo_sapiens.gmt")
+wp2gene <- wp2gene %>% tidyr::separate(ont, c("name","version","wpid","org"), "%")
+wpid2gene <- wp2gene %>% dplyr::select(wpid, gene) #TERM2GENE
+wpid2name <- wp2gene %>% dplyr::select(wpid, name) #TERM2NAME
+all.genes.dt = data.table(gene=all.genes) %>% 
+  .[,gene.new:=gsub("\\.[0-9]+", "", all.genes)]
+gene.eg.dt = clusterProfiler::bitr(all.genes.dt$gene.new, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+all.genes.dt$ENTREZID = gene.eg.dt[match(all.genes.dt$gene.new, gene.eg.dt$SYMBOL),]$ENTREZID
+
+deg.all = list()  
+# for (clust.curr in names(davis.exp.matched)) {
+require(foreach)
+require(doMC)
+registerDoMC(cores = 8)
+
+# deg.all = foreach( clust.curr=names(davis.exp.matched), .inorder=T) %dopar%{
+for (clust.curr in names(davis.exp.matched)) {
+  
+  dt.all = davis.gdt.type12[,.(x=frac,dataset=label)] 
+  psuedobulk.curr = davis.exp.matched[[clust.curr]]
+  avi.dt= mclapply(nrow(psuedobulk.curr) %>% seq, function(tt){
+    dt.curr = dt.all%>% 
+      .[,y:=psuedobulk.curr[tt,]] %>% 
+      .[!is.na(y)] %>% 
+      eval.nlme()
+  }, mc.cores = 64) %>% 
+    do.call(rbind,.) %>% data.table %>% 
+    .[,gene:=all.genes.dt$gene.new]%>%
+    .[,ENTREZID:=all.genes.dt$ENTREZID]
+  deg.curr = avi.dt
+  avi.dt = avi.dt[!grepl("^RP",gene)][!is.na(ENTREZID)][order(p)]
+
+  curr.dir = sprintf("/liulab/asahu/projects/gdt/results/coinfiltration/%s/", clust.curr)
+  dir.create(curr.dir)
+  pCutoff = sort(avi.dt$p)[50]  %>% min(c(.,1E-3) ,na.rm = T)
+  FCcutoff = sort(abs(avi.dt$beta),decreasing = T)[300]  %>% min(c(.,.1) ,na.rm = T)
+  p = EnhancedVolcano::EnhancedVolcano(avi.dt,
+                                       lab = avi.dt$gene,
+                                       x = 'beta',
+                                       y = 'p',
+                                       pCutoff = pCutoff,
+                                       FCcutoff = FCcutoff,
+                                       labSize = 2.0,
+                                       legend=c('NS','beta','P',
+                                                'P & beta'),
+                                       legendPosition = 'right',
+                                       drawConnectors = TRUE,
+                                       widthConnectors = 0.2,
+                                       colAlpha = 0.8,
+                                       colConnectors = 'grey30')
+  
+  ggsave(sprintf("%s/volcano.pdf", curr.dir), p)
+  ## Volcano plot
+  ## KEGG enrichment 
+  ## GO enrichment 
+  ## Msigdb enrichment
+  top.genes = avi.dt[beta>0][!is.na(ENTREZID)][order(p)[1:150]]$ENTREZID
+  bottom.genes = avi.dt[beta<0][!is.na(ENTREZID)][order(p)[1:150]]$ENTREZID
+  kk <- clusterProfiler::enrichKEGG(gene = top.genes,
+                                    organism     = 'hsa',
+                                  minGSSize = 2,
+                                  universe = avi.dt$ENTREZID,
+                                    pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/topkegg.pdf", curr.dir),p)
+  kk <- clusterProfiler::enrichGO(gene = top.genes,
+                                  OrgDb    = org.Hs.eg.db,
+                                  ont      = "BP",
+                                  minGSSize = 2,
+                                  universe = avi.dt$ENTREZID,
+                                  pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/topgo_bp.pdf", curr.dir),p)
+  kk <- clusterProfiler::enrichGO(gene = top.genes,
+                                  OrgDb    = org.Hs.eg.db,
+                                  ont      = "MF",
+                                  universe = avi.dt$ENTREZID,
+                                  minGSSize = 2,
+                                  pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/topgo_mf.pdf", curr.dir),p)
+  kk <- clusterProfiler::enrichKEGG(gene = bottom.genes,
+                                    organism     = 'hsa',
+                                  universe = avi.dt$ENTREZID,
+                                  minGSSize = 2,
+                                    pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/bottomkegg.pdf", curr.dir),p)
+  kk <- clusterProfiler::enrichGO(gene = bottom.genes,
+                                  OrgDb    = org.Hs.eg.db,
+                                  universe = avi.dt$ENTREZID,
+                                  minGSSize = 2,
+                                  ont      = "BP",
+                                  pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/bottomgo_bp.pdf", curr.dir),p)
+  kk <- clusterProfiler::enrichGO(gene = bottom.genes,
+                                  OrgDb    = org.Hs.eg.db,
+                                  universe = avi.dt$ENTREZID,
+                                  minGSSize = 2,
+                                  ont      = "MF",
+                                  pvalueCutoff = 0.1)
+  p = clusterProfiler::dotplot(kk, showCategory=30)
+  ggsave(filename = sprintf("%s/bottomgo_mf.pdf", curr.dir),p)
+  
+  avi.dt[,score:=-sign(beta)*log(p+1E-100)]
+  geneList = avi.dt$score %>% 
+  set_names(avi.dt$ENTREZID) %>%  
+  sort(., decreasing = TRUE)
+  geneList = geneList[!(names(geneList) %>% duplicated)]
+  ewp <- GSEA(geneList, minGSSize =4, TERM2GENE = wpid2gene,  pvalueCutoff = 0.2, TERM2NAME = wpid2name)
+  try({
+    p = clusterProfiler::dotplot(ewp, showCategory=30)
+  ggsave(filename = sprintf("%s/gsea_up.pdf", curr.dir),p)
+  })
+  
+  avi.dt[,score:=sign(beta)*log(p+1E-100)]
+  geneList = avi.dt$score %>% 
+    set_names(avi.dt$ENTREZID) %>%  
+    sort(., decreasing = TRUE)
+  geneList = geneList[!(names(geneList) %>% duplicated)]
+  ewp <- GSEA(geneList, minGSSize =4, TERM2GENE = wpid2gene,  pvalueCutoff = 0.2, TERM2NAME = wpid2name)
+  try({
+    p = clusterProfiler::dotplot(ewp, showCategory=30)
+    ggsave(filename = sprintf("%s/gsea_down.pdf", curr.dir),p)
+  })
+  deg.all[[clust.curr]] = deg.curr
+}
+saveRDS(file="/liulab/asahu/projects/gdt/data/rds/coinfiltration.deg.all.genes_deg_gdtHi_vs_gdTLo.Rds", deg.all)
+```
+
+
+

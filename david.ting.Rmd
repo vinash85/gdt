@@ -78,8 +78,8 @@ sco$eis= sco.eis[,1]
 FeaturePlot(sco,features = "eis")
 ```
 
-## gamma delta score
-```{r}
+Use RCTD to score each roi 
 
+```{r}
 ```
 
